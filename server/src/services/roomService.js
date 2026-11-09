@@ -21,6 +21,7 @@ const SUIT_ALIASES = {
     "♠": "spades",
 };
 const RANK_ALIASES = {ACE: "A", 1: "A", JACK: "J", QUEEN: "Q", KING: "K"};
+const BOT_NAMES = ["Nancy", "Maya", "Rashmi", "Zoya", "Tanu"];
 
 // ---------------------------------------------------------------------------
 // Card helpers. Cards are normalised once when dealt, so the rest of the
@@ -174,6 +175,7 @@ function advanceTurn(room, steps = 1) {
     round.currentPlayerId = nextActiveId(room, round.currentPlayerId, steps);
     round.drawnCardId = null;
     round.extraTurn = false;
+    round.aceFinish = false;
 }
 
 // Tells clients what just happened so they can animate it (a card flying
@@ -199,6 +201,7 @@ function getPublicRoom(room) {
     return {
         code: room.code,
         hostId: room.hostId,
+        solo: Boolean(room.solo),
         status: room.status,
         roundNumber: room.roundNumber,
         targetScore: ELIMINATION_SCORE,
@@ -208,6 +211,8 @@ function getPublicRoom(room) {
             name: player.name,
             isHost: player.id === room.hostId,
             isDealer: round ? round.dealerId === player.id : false,
+            isBot: Boolean(player.isBot),
+            connected: player.connected !== false,
             score: room.scores[player.id] || 0,
             eliminated: Boolean(player.eliminated),
             cardCount: round?.hands[player.id]?.length ?? 0,
@@ -217,7 +222,8 @@ function getPublicRoom(room) {
         chosenSuit: round?.chosenSuit ?? null,
         pendingDraw: round?.pendingDraw ?? 0,
         drawPileCount: round?.drawPile.length ?? 0,
-        canPass: Boolean(round?.drawnCardId),
+        canPass: Boolean(round?.drawnCardId) && !round?.aceFinish,
+        aceFinish: Boolean(round?.aceFinish),
         extraTurn: Boolean(round?.extraTurn),
         recentDiscards: round ? round.discardPile.slice(-6) : [],
         lastEvent: room.lastEvent || null,
@@ -236,6 +242,8 @@ function getPrivateStates(rawCode) {
     const states = {};
 
     for (const player of room.players) {
+        if (player.isBot) continue; // bots have no socket to send to
+
         const hand = round.hands[player.id];
         if (!hand) continue;
 
@@ -257,18 +265,18 @@ function getPrivateStates(rawCode) {
 // Room lifecycle
 // ---------------------------------------------------------------------------
 
-function createRoom(socketId, rawName) {
+function createRoom(playerId, rawName) {
     const name = cleanName(rawName);
     if (!name) throw new Error("Enter a player name.");
 
     const code = generateRoomCode();
     const room = {
         code,
-        hostId: socketId,
-        dealerId: socketId,
+        hostId: playerId,
+        dealerId: playerId,
         status: "waiting",
-        players: [{id: socketId, name, eliminated: false}],
-        scores: {[socketId]: 0},
+        players: [{id: playerId, name, eliminated: false, connected: true}],
+        scores: {[playerId]: 0},
         roundNumber: 0,
         round: null,
         gameWinnerId: null,
@@ -276,23 +284,25 @@ function createRoom(socketId, rawName) {
         matchSaved: false,
         eventSeq: 0,
         lastEvent: null,
+        solo: false,
     };
 
     rooms.set(code, room);
     return getPublicRoom(room);
 }
 
-function joinRoom(socketId, rawCode, rawName) {
+function joinRoom(playerId, rawCode, rawName) {
     const room = findRoom(rawCode);
     const name = cleanName(rawName);
 
     if (!name) throw new Error("Enter a player name.");
     if (!room) throw new Error("Room not found. Check the invite code.");
+    if (room.solo) throw new Error("This is a solo game.");
     if (room.status !== "waiting") {
         throw new Error("This game has already started.");
     }
 
-    if (room.players.some((player) => player.id === socketId)) {
+    if (room.players.some((player) => player.id === playerId)) {
         return getPublicRoom(room);
     }
 
@@ -300,8 +310,8 @@ function joinRoom(socketId, rawCode, rawName) {
         throw new Error("This room is full.");
     }
 
-    room.players.push({id: socketId, name, eliminated: false});
-    room.scores[socketId] = 0;
+    room.players.push({id: playerId, name, eliminated: false, connected: true});
+    room.scores[playerId] = 0;
 
     return getPublicRoom(room);
 }
@@ -311,12 +321,12 @@ function getRoomByCode(rawCode) {
     return room ? getPublicRoom(room) : null;
 }
 
-function startRound(socketId, rawCode) {
+function startRound(playerId, rawCode) {
     const room = findRoom(rawCode);
 
     if (!room) throw new Error("Room not found.");
 
-    if (room.hostId !== socketId) {
+    if (room.hostId !== playerId) {
         throw new Error("Only the host can start or continue the game.");
     }
 
@@ -378,6 +388,7 @@ function startRound(socketId, rawCode) {
         chosenSuit: null,
         drawnCardId: null,
         extraTurn: false,
+        aceFinish: false,
         lastAction: openingPenalty
             ? `Round ${room.roundNumber} started. The first card is ${cardLabel(firstDiscardCard)}, so ${firstName} must draw ${openingPenalty}.`
             : `Round ${room.roundNumber} started. ${firstName} goes first.`,
@@ -394,7 +405,7 @@ function startRound(socketId, rawCode) {
 // Turn actions
 // ---------------------------------------------------------------------------
 
-function getTurnContext(socketId, rawCode) {
+function getTurnContext(playerId, rawCode) {
     const room = findRoom(rawCode);
 
     if (!room) throw new Error("Room not found.");
@@ -405,18 +416,18 @@ function getTurnContext(socketId, rawCode) {
     const round = room.round;
 
     if (round.result) throw new Error("This round has already finished.");
-    if (!round.hands[socketId]) {
+    if (!round.hands[playerId]) {
         throw new Error("You are not a player in this round.");
     }
-    if (round.currentPlayerId !== socketId) {
+    if (round.currentPlayerId !== playerId) {
         throw new Error("It is not your turn.");
     }
 
-    return {room, round, hand: round.hands[socketId]};
+    return {room, round, hand: round.hands[playerId]};
 }
 
-function playCard(socketId, rawCode, cardId, rawSuit) {
-    const {room, round, hand} = getTurnContext(socketId, rawCode);
+function playCard(playerId, rawCode, cardId, rawSuit) {
+    const {room, round, hand} = getTurnContext(playerId, rawCode);
 
     const cardIndex = hand.findIndex((card) => card.id === cardId);
     if (cardIndex === -1) throw new Error("That card is not in your hand.");
@@ -448,18 +459,39 @@ function playCard(socketId, rawCode, cardId, rawSuit) {
     round.discardPile.push(card);
     round.chosenSuit = chosenSuit;
     round.drawnCardId = null;
-    setEvent(room, "play", socketId, {card});
+    setEvent(room, "play", playerId, {card});
 
-    const name = playerName(room, socketId);
+    const name = playerName(room, playerId);
     let action = `${name} played ${cardLabel(card)}.`;
+    const penalty = penaltyOf(card);
 
-    // Going out ends the round immediately, before the card's effect.
+    round.aceFinish = false;
+
     if (hand.length === 0) {
-        endRound(room, socketId);
+        // Going out with an Ace: the player must draw one more card. If it
+        // can be played they win, otherwise the round goes on.
+        if (card.rank === "A") {
+            round.aceFinish = true;
+            round.extraTurn = true;
+            round.lastAction = `${name} played their last card, an Ace, and must draw a card. If it can be played, ${name} wins the round.`;
+            return {room: getPublicRoom(room), roundOver: false};
+        }
+
+        // Going out with a 2 or the Jack of Clubs: the next player still
+        // draws the penalty, and those cards count toward their score.
+        let note = "";
+        if (penalty > 0) {
+            const victimId = nextActiveId(room, playerId, 1);
+            const total = round.pendingDraw + penalty;
+            const drawn = drawFromPile(round, total);
+            round.hands[victimId].push(...drawn);
+            round.pendingDraw = 0;
+            note = `${playerName(room, victimId)} draws ${drawn.length} card${drawn.length === 1 ? "" : "s"}, which count toward their score.`;
+        }
+
+        endRound(room, playerId, note);
         return {room: getPublicRoom(room), roundOver: true};
     }
-
-    const penalty = penaltyOf(card);
 
     if (penalty > 0) {
         // Draw penalties stack: the amounts add together.
@@ -486,9 +518,9 @@ function playCard(socketId, rawCode, cardId, rawSuit) {
     return {room: getPublicRoom(room), roundOver: false};
 }
 
-function drawCard(socketId, rawCode) {
-    const {room, round, hand} = getTurnContext(socketId, rawCode);
-    const name = playerName(room, socketId);
+function drawCard(playerId, rawCode) {
+    const {room, round, hand} = getTurnContext(playerId, rawCode);
+    const name = playerName(room, playerId);
 
     // Accept the draw penalty (the player then carries on with their turn).
     if (round.pendingDraw > 0) {
@@ -496,7 +528,7 @@ function drawCard(socketId, rawCode) {
         const drawn = drawFromPile(round, wanted);
         hand.push(...drawn);
         round.pendingDraw = 0;
-        setEvent(room, "draw", socketId, {count: drawn.length, penalty: true});
+        setEvent(room, "draw", playerId, {count: drawn.length, penalty: true});
 
         // The turn is NOT over: after taking the penalty, the same player
         // can still play a matching card, or draw a card from the deck.
@@ -518,20 +550,30 @@ function drawCard(socketId, rawCode) {
     const [drawn] = drawFromPile(round, 1);
 
     if (!drawn) {
+        // Went out with an Ace and nothing is left to draw: they win.
+        if (round.aceFinish && hand.length === 0) {
+            endRound(room, playerId, "There were no cards left to draw.");
+            return {room: getPublicRoom(room)};
+        }
+
         round.lastAction = `${name} could not draw (no cards left) and passed.`;
         advanceTurn(room, 1);
         return {room: getPublicRoom(room)};
     }
 
     hand.push(drawn);
-    setEvent(room, "draw", socketId, {count: 1, penalty: false});
+    setEvent(room, "draw", playerId, {count: 1, penalty: false});
 
     if (canPlay(round, drawn)) {
         // The drawn card is playable: the player may play it or pass.
         round.drawnCardId = drawn.id;
-        round.lastAction = `${name} drew a card and may play it.`;
+        round.lastAction = round.aceFinish
+            ? `${name} drew a card and must play it to win.`
+            : `${name} drew a card and may play it.`;
     } else {
-        round.lastAction = `${name} drew a card and passed.`;
+        round.lastAction = round.aceFinish
+            ? `${name} drew a card that cannot be played, so the round goes on.`
+            : `${name} drew a card and passed.`;
         advanceTurn(room, 1);
     }
 
@@ -539,14 +581,20 @@ function drawCard(socketId, rawCode) {
 }
 
 // Used after drawing a playable card the player chooses not to play.
-function passTurn(socketId, rawCode) {
-    const {room, round} = getTurnContext(socketId, rawCode);
+function passTurn(playerId, rawCode) {
+    const {room, round} = getTurnContext(playerId, rawCode);
 
     if (!round.drawnCardId) {
         throw new Error("You can only pass after drawing a playable card.");
     }
 
-    round.lastAction = `${playerName(room, socketId)} passed.`;
+    if (round.aceFinish) {
+        throw new Error(
+            "You went out with an Ace, so you must play the card you drew.",
+        );
+    }
+
+    round.lastAction = `${playerName(room, playerId)} passed.`;
     advanceTurn(room, 1);
 
     return {room: getPublicRoom(room)};
@@ -556,7 +604,7 @@ function passTurn(socketId, rawCode) {
 // End of round / game
 // ---------------------------------------------------------------------------
 
-function endRound(room, winnerId) {
+function endRound(room, winnerId, note = "") {
     const round = room.round;
 
     const cards = Object.keys(round.hands).map((playerId) => {
@@ -591,7 +639,7 @@ function endRound(room, winnerId) {
         cards,
     };
 
-    round.lastAction = `${playerName(room, winnerId)} played their last card and won the round!`;
+    round.lastAction = `${playerName(room, winnerId)} played their last card and won the round!${note ? ` ${note}` : ""}`;
     room.history.push(cloneData(round.result));
 
     const remaining = activePlayers(room);
@@ -603,22 +651,26 @@ function endRound(room, winnerId) {
 }
 
 // ---------------------------------------------------------------------------
-// Disconnects
+// Disconnects and reconnects
+//
+// Players are identified by a permanent playerId sent by the app, not by
+// socket.id (which changes on every reconnect). When a connection drops the
+// player keeps their seat for RECONNECT_GRACE_MS and can come back.
 // ---------------------------------------------------------------------------
 
-const RECONNECT_GRACE_MS = 60_000;
+const RECONNECT_GRACE_MS = 120_000;
 const disconnectTimers = new Map();
 
-function markPlayerDisconnected(socketId, io) {
+function markPlayerDisconnected(playerId, io) {
     for (const [code, room] of rooms) {
-        const player = room.players.find((item) => item.id === socketId);
+        const player = room.players.find((item) => item.id === playerId);
 
         if (!player) continue;
 
         player.connected = false;
         player.reconnectUntil = Date.now() + RECONNECT_GRACE_MS;
 
-        const timerKey = `${code}:${socketId}`;
+        const timerKey = `${code}:${playerId}`;
         clearTimeout(disconnectTimers.get(timerKey));
 
         const timer = setTimeout(() => {
@@ -629,7 +681,7 @@ function markPlayerDisconnected(socketId, io) {
             }
 
             const currentPlayer = currentRoom.players.find(
-                (item) => item.id === socketId,
+                (item) => item.id === playerId,
             );
 
             if (
@@ -641,7 +693,7 @@ function markPlayerDisconnected(socketId, io) {
                 return;
             }
 
-            const result = removePlayer(socketId);
+            const result = removePlayer(playerId);
 
             disconnectTimers.delete(timerKey);
 
@@ -662,40 +714,63 @@ function markPlayerDisconnected(socketId, io) {
     return null;
 }
 
-function removePlayer(socketId) {
+// Called when a known player connects again. Gives their seat back.
+function reconnectPlayer(playerId) {
+    for (const [code, room] of rooms) {
+        const player = room.players.find((item) => item.id === playerId);
+
+        if (!player) continue;
+
+        player.connected = true;
+        delete player.reconnectUntil;
+
+        const timerKey = `${code}:${playerId}`;
+        clearTimeout(disconnectTimers.get(timerKey));
+        disconnectTimers.delete(timerKey);
+
+        return {code, room: getPublicRoom(room)};
+    }
+
+    return null;
+}
+
+function removePlayer(playerId) {
     for (const [code, room] of rooms) {
         const index = room.players.findIndex(
-            (player) => player.id === socketId,
+            (player) => player.id === playerId,
         );
 
         if (index === -1) continue;
 
-        const timerKey = `${code}:${socketId}`;
+        const timerKey = `${code}:${playerId}`;
         clearTimeout(disconnectTimers.get(timerKey));
         disconnectTimers.delete(timerKey);
 
         room.players.splice(index, 1);
-        delete room.scores[socketId];
+        delete room.scores[playerId];
 
         if (room.round) {
-            delete room.round.hands[socketId];
+            delete room.round.hands[playerId];
 
             if (room.round.result) {
                 room.round.result.cards = room.round.result.cards.filter(
-                    (item) => item.playerId !== socketId,
+                    (item) => item.playerId !== playerId,
                 );
                 room.round.result.winnerIds =
-                    room.round.result.winnerIds.filter((id) => id !== socketId);
+                    room.round.result.winnerIds.filter((id) => id !== playerId);
             }
         }
 
-        if (room.players.length === 0) {
+        // No humans left (bots do not count): close the room.
+        if (room.players.every((player) => player.isBot)) {
             rooms.delete(code);
             return {code, room: null};
         }
 
-        if (room.hostId === socketId) {
-            room.hostId = room.players[0].id;
+        if (room.hostId === playerId) {
+            const nextHost =
+                room.players.find((player) => !player.isBot) || room.players[0];
+            room.hostId = nextHost.id;
         }
 
         // A round interrupted by a player leaving is cancelled (no points).
@@ -758,7 +833,8 @@ function getCompletedMatchData(rawCode) {
 function claimMatchSave(rawCode) {
     const room = findRoom(rawCode);
 
-    if (!room || room.status !== "finished" || room.matchSaved) {
+    // Solo games are not saved to the database.
+    if (!room || room.status !== "finished" || room.matchSaved || room.solo) {
         return false;
     }
 
@@ -766,8 +842,105 @@ function claimMatchSave(rawCode) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Solo mode: bots
+// ---------------------------------------------------------------------------
+
+function createSoloRoom(playerId, rawName, rawBots) {
+    const botCount = Math.min(
+        Math.max(parseInt(rawBots, 10) || 1, 1),
+        MAX_PLAYERS - 1,
+    );
+
+    const publicRoom = createRoom(playerId, rawName);
+    const room = rooms.get(publicRoom.code);
+    room.solo = true;
+
+    for (let i = 0; i < botCount; i++) {
+        const id = `bot-${room.code}-${i + 1}`;
+        room.players.push({
+            id,
+            name: BOT_NAMES[i],
+            eliminated: false,
+            isBot: true,
+            connected: true,
+        });
+        room.scores[id] = 0;
+    }
+
+    return getPublicRoom(room);
+}
+
+function bestSuit(hand, excludeId) {
+    const counts = Object.fromEntries(SUITS.map((s) => [s, 0]));
+    for (const card of hand) if (card.id !== excludeId) counts[card.suit]++;
+    return [...SUITS].sort((a, b) => counts[b] - counts[a])[0];
+}
+
+function chooseBotMove(round, botId) {
+    const hand = round.hands[botId];
+
+    // Facing a penalty: stack if allowed, otherwise draw.
+    if (round.pendingDraw > 0) {
+        const stacker = ALLOW_PENALTY_STACKING
+            ? hand.find((card) => canPlay(round, card))
+            : null;
+        return stacker ? {type: "play", cardId: stacker.id} : {type: "draw"};
+    }
+
+    const playable = hand.filter((card) => canPlay(round, card));
+    if (playable.length === 0) return {type: "draw"};
+
+    // Keep 8s as a rescue card and dump the highest-point cards first
+    // (the Jack of Clubs is worth 25, so it goes early).
+    const normal = playable.filter((card) => card.rank !== "8");
+    const pool = normal.length ? normal : playable;
+    pool.sort((a, b) => cardPoints(b) - cardPoints(a));
+
+    const card = pool[0];
+    return {
+        type: "play",
+        cardId: card.id,
+        suit: card.rank === "8" ? bestSuit(hand, card.id) : undefined,
+    };
+}
+
+function isBotTurn(rawCode) {
+    const room = findRoom(rawCode);
+    if (!room || room.status !== "playing" || !room.round) return false;
+    if (room.round.result) return false;
+    const current = room.players.find(
+        (p) => p.id === room.round.currentPlayerId,
+    );
+    return Boolean(current?.isBot);
+}
+
+function runBotTurn(rawCode) {
+    if (!isBotTurn(rawCode)) return null;
+
+    const room = findRoom(rawCode);
+    const botId = room.round.currentPlayerId;
+    const move = chooseBotMove(room.round, botId);
+
+    try {
+        if (move.type === "play") {
+            return playCard(botId, rawCode, move.cardId, move.suit);
+        }
+        return drawCard(botId, rawCode);
+    } catch (error) {
+        // Safety net so a bot can never freeze the table.
+        console.error("Bot move failed:", error.message);
+        try {
+            return drawCard(botId, rawCode);
+        } catch {
+            return passTurn(botId, rawCode);
+        }
+    }
+}
+
 module.exports = {
     createRoom,
+    createSoloRoom,
     joinRoom,
     getRoomByCode,
     startRound,
@@ -778,5 +951,8 @@ module.exports = {
     getCompletedMatchData,
     claimMatchSave,
     markPlayerDisconnected,
+    reconnectPlayer,
     getPrivateStates,
+    isBotTurn,
+    runBotTurn,
 };

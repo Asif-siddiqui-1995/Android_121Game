@@ -22,6 +22,9 @@ const L = {
     cream: "#FFF6DD",
 };
 
+const MIN_BOTS = 1;
+const MAX_BOTS = 5;
+
 // Gold-filled text with a deep red outline, drawn by stacking offset copies.
 function OutlinedText({children, size, fill, stroke, shadow, width = 4}) {
     const base = {
@@ -80,9 +83,9 @@ const PLAY_TRIANGLE = (
         style={{
             width: 0,
             height: 0,
-            borderTopWidth: 17,
-            borderBottomWidth: 17,
-            borderLeftWidth: 28,
+            borderTopWidth: 15,
+            borderBottomWidth: 15,
+            borderLeftWidth: 25,
             borderTopColor: "transparent",
             borderBottomColor: "transparent",
             borderLeftColor: L.cream,
@@ -91,6 +94,7 @@ const PLAY_TRIANGLE = (
 );
 
 // A chunky candy button: coloured face, darker lip underneath, shine on top.
+// "stacked" puts the icon above the text, for half-width buttons.
 function GameButton({
     title,
     subtitle,
@@ -100,6 +104,7 @@ function GameButton({
     border,
     onPress,
     compact,
+    stacked,
 }) {
     const radius = compact ? 18 : 24;
 
@@ -127,35 +132,51 @@ function GameButton({
                             backgroundColor: face,
                             borderRadius: radius - 3,
                             overflow: "hidden",
-                            minHeight: compact ? 52 : 74,
+                            minHeight: compact ? 52 : stacked ? 112 : 74,
                             justifyContent: "center",
                         }}
                     >
                         <View style={styles.shine} />
-                        <View style={styles.btnRow}>
+                        <View
+                            style={[
+                                styles.btnRow,
+                                stacked && styles.btnRowStacked,
+                            ]}
+                        >
                             <View
                                 style={[
                                     styles.iconSlot,
                                     compact && {width: 36},
+                                    stacked && styles.iconSlotStacked,
                                 ]}
                             >
                                 {icon}
                             </View>
                             <View
                                 style={
-                                    compact ? undefined : styles.btnTextBlock
+                                    compact
+                                        ? undefined
+                                        : stacked
+                                          ? styles.btnTextStacked
+                                          : styles.btnTextBlock
                                 }
                             >
                                 <Text
                                     style={[
                                         styles.btnTitle,
                                         compact && {fontSize: 18},
+                                        stacked && {fontSize: 22},
                                     ]}
                                 >
                                     {title}
                                 </Text>
                                 {subtitle ? (
-                                    <Text style={styles.btnSub}>
+                                    <Text
+                                        style={[
+                                            styles.btnSub,
+                                            stacked && styles.btnSubStacked,
+                                        ]}
+                                    >
                                         {subtitle}
                                     </Text>
                                 ) : null}
@@ -165,6 +186,92 @@ function GameButton({
                 </View>
             )}
         </Pressable>
+    );
+}
+
+// Play Solo and the opponent count in a single candy button.
+// Tapping the left side starts the game; the - and + change the bots.
+function SoloButton({count, onPlay, onMinus, onPlus}) {
+    const [down, setDown] = useState(false);
+    const radius = 24;
+
+    return (
+        <View
+            style={[
+                styles.lip,
+                {
+                    backgroundColor: "#A82A22",
+                    borderColor: "#6B1410",
+                    borderRadius: radius,
+                    paddingBottom: down ? 2 : 6,
+                    marginTop: down ? 4 : 0,
+                },
+            ]}
+        >
+            <View
+                style={{
+                    backgroundColor: "#E8453C",
+                    borderRadius: radius - 3,
+                    overflow: "hidden",
+                    minHeight: 74,
+                    justifyContent: "center",
+                }}
+            >
+                <View style={styles.shine} pointerEvents="none" />
+
+                <View style={styles.soloRow}>
+                    <Pressable
+                        style={styles.soloMain}
+                        onPress={onPlay}
+                        onPressIn={() => setDown(true)}
+                        onPressOut={() => setDown(false)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Play solo"
+                    >
+                        <View style={[styles.iconSlot, {width: 52}]}>
+                            <Text style={styles.emoji}>👽</Text>
+                        </View>
+                        <View style={[styles.btnTextBlock, styles.flex]}>
+                            <Text
+                                style={[styles.btnTitle, {fontSize: 24}]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                            >
+                                Play Solo
+                            </Text>
+                            <Text style={styles.btnSub} numberOfLines={1}>
+                                Against bots
+                            </Text>
+                        </View>
+                    </Pressable>
+
+                    <View style={styles.soloStepper}>
+                        <Text style={styles.stepLabel}>Opponents</Text>
+                        <View style={styles.stepRow}>
+                            <Pressable
+                                style={styles.botBtn}
+                                hitSlop={6}
+                                onPress={onMinus}
+                                accessibilityRole="button"
+                                accessibilityLabel="Fewer opponents"
+                            >
+                                <Text style={styles.botBtnText}>−</Text>
+                            </Pressable>
+                            <Text style={styles.botCount}>{count}</Text>
+                            <Pressable
+                                style={styles.botBtn}
+                                hitSlop={6}
+                                onPress={onPlus}
+                                accessibilityRole="button"
+                                accessibilityLabel="More opponents"
+                            >
+                                <Text style={styles.botBtnText}>+</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </View>
+        </View>
     );
 }
 
@@ -199,12 +306,14 @@ export default function LobbyScreen({
     codeInput,
     setCodeInput,
     onCreate,
+    onCreateSolo, // (botCount) => void
     onJoin,
     onOpenHistory,
     onOpenSettings,
 }) {
     const {width, height} = useWindowDimensions();
-    const [roomMode, setRoomMode] = useState(null); // "create" | "join" | null
+    const [roomMode, setRoomMode] = useState(null); // "create" | "join" | "solo" | null
+    const [botCount, setBotCount] = useState(1);
     const [showRules, setShowRules] = useState(false);
 
     useScreenMusic("home");
@@ -212,6 +321,13 @@ export default function LobbyScreen({
     const notice = !connected
         ? message || "Connecting to the server..."
         : message;
+
+    const submitHandler =
+        roomMode === "join"
+            ? onJoin
+            : roomMode === "solo"
+              ? () => onCreateSolo?.(botCount)
+              : onCreate;
 
     return (
         <ScreenBackground>
@@ -302,34 +418,56 @@ export default function LobbyScreen({
 
                     {/* Buttons */}
                     <View style={styles.buttons}>
-                        <GameButton
-                            title="Create Room"
-                            subtitle="Start a new game"
-                            icon={PLAY_TRIANGLE}
-                            face="#2DB52D"
-                            lip="#167A1B"
-                            border="#0B4A10"
-                            onPress={() => setRoomMode("create")}
-                        />
+                        {/* Create and Join side by side */}
+                        <View style={styles.pairRow}>
+                            <View style={styles.flex}>
+                                <GameButton
+                                    stacked
+                                    title="Create Room"
+                                    subtitle="Start a new game"
+                                    icon={PLAY_TRIANGLE}
+                                    face="#2DB52D"
+                                    lip="#167A1B"
+                                    border="#0B4A10"
+                                    onPress={() => setRoomMode("create")}
+                                />
+                            </View>
+                            <View style={{width: 12}} />
+                            <View style={styles.flex}>
+                                <GameButton
+                                    stacked
+                                    title="Join Room"
+                                    subtitle="Enter invite code"
+                                    icon={
+                                        <Ionicons
+                                            name="people"
+                                            size={40}
+                                            color="#FFFFFF"
+                                        />
+                                    }
+                                    face="#2A6DF0"
+                                    lip="#1347B8"
+                                    border="#0A2A78"
+                                    onPress={() => setRoomMode("join")}
+                                />
+                            </View>
+                        </View>
 
                         <View style={{height: 14}} />
 
-                        <GameButton
-                            title="Join Room"
-                            subtitle="Enter invite code"
-                            icon={
-                                <Ionicons
-                                    name="people"
-                                    size={45}
-                                    color="#FFFFFF"
-                                />
+                        {/* Play Solo + opponents in one button */}
+                        <SoloButton
+                            count={botCount}
+                            onPlay={() => setRoomMode("solo")}
+                            onMinus={() =>
+                                setBotCount((n) => Math.max(MIN_BOTS, n - 1))
                             }
-                            face="#2A6DF0"
-                            lip="#1347B8"
-                            border="#0A2A78"
-                            onPress={() => setRoomMode("join")}
+                            onPlus={() =>
+                                setBotCount((n) => Math.min(MAX_BOTS, n + 1))
+                            }
                         />
 
+                        {/* History and Rules */}
                         <View style={styles.smallRow}>
                             <View style={styles.flex}>
                                 <GameButton
@@ -413,7 +551,7 @@ export default function LobbyScreen({
                 setCodeInput={setCodeInput}
                 connected={connected}
                 message={message}
-                onSubmit={roomMode === "join" ? onJoin : onCreate}
+                onSubmit={submitHandler}
             />
             <RulesModal
                 visible={showRules}
@@ -459,13 +597,6 @@ const styles = StyleSheet.create({
         borderWidth: 3,
         borderColor: L.gold,
         borderRadius: 38,
-    },
-    logoWrap: {
-        position: "absolute",
-        top: 70,
-        left: 0,
-        right: 0,
-        alignItems: "center",
     },
     crown: {
         position: "absolute",
@@ -542,6 +673,7 @@ const styles = StyleSheet.create({
         maxWidth: 460,
         alignSelf: "center",
     },
+    pairRow: {flexDirection: "row"},
     smallRow: {flexDirection: "row", marginTop: 14},
     lip: {borderWidth: 2.5, paddingHorizontal: 0, paddingTop: 0},
     shine: {
@@ -558,8 +690,16 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         paddingVertical: 8,
     },
+    btnRowStacked: {
+        flexDirection: "column",
+        justifyContent: "center",
+        paddingHorizontal: 8,
+        paddingVertical: 10,
+    },
     iconSlot: {width: 64, alignItems: "center", justifyContent: "center"},
+    iconSlotStacked: {width: "auto", height: 42, marginBottom: 4},
     btnTextBlock: {marginLeft: 6},
+    btnTextStacked: {alignItems: "center"},
     btnTitle: {
         color: "#FFFFFF",
         fontSize: 28,
@@ -569,8 +709,54 @@ const styles = StyleSheet.create({
         textShadowRadius: 2,
     },
     btnSub: {color: "rgba(255,255,255,0.92)", fontSize: 17, marginTop: -2},
+    btnSubStacked: {fontSize: 13, textAlign: "center"},
     emoji: {fontSize: 38},
     emojiSmall: {fontSize: 26},
+
+    // Play Solo button with the opponent count inside
+    soloRow: {flexDirection: "row", alignItems: "center"},
+    soloMain: {
+        flex: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        paddingLeft: 14,
+        paddingVertical: 8,
+    },
+    soloStepper: {
+        alignItems: "center",
+        paddingRight: 14,
+        paddingLeft: 6,
+    },
+    stepLabel: {
+        color: "rgba(255,255,255,0.92)",
+        fontSize: 12,
+        fontWeight: "700",
+        marginBottom: 3,
+    },
+    stepRow: {flexDirection: "row", alignItems: "center", gap: 6},
+    botBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: L.navy,
+        borderWidth: 2.5,
+        borderColor: L.gold,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    botBtnText: {
+        color: L.gold,
+        fontSize: 22,
+        fontWeight: "900",
+        lineHeight: 26,
+    },
+    botCount: {
+        color: "#FFFFFF",
+        fontSize: 22,
+        fontWeight: "900",
+        minWidth: 20,
+        textAlign: "center",
+    },
 
     footer: {
         height: 176,

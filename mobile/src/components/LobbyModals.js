@@ -67,9 +67,10 @@ function DialogButton({title, onPress, disabled}) {
     );
 }
 
-// Create a room (name only) or join one (name + invite code).
+// Create a room (name only), join one (name + invite code),
+// or start a solo game against bots (name only).
 export function RoomModal({
-    mode,
+    mode, // "create" | "join" | "solo" | null
     onClose,
     name,
     setName,
@@ -80,15 +81,24 @@ export function RoomModal({
     onSubmit,
 }) {
     const joining = mode === "join";
+    const solo = mode === "solo";
     const canSubmit =
         connected && name.trim() && (!joining || codeInput.trim().length === 6);
 
+    const title = joining
+        ? "Join a room"
+        : solo
+          ? "Play solo"
+          : "Create a room";
+
+    const buttonTitle = joining
+        ? "Join room"
+        : solo
+          ? "Start solo game"
+          : "Create room";
+
     return (
-        <Dialog
-            visible={Boolean(mode)}
-            onClose={onClose}
-            title={joining ? "Join a room" : "Create a room"}
-        >
+        <Dialog visible={Boolean(mode)} onClose={onClose} title={title}>
             <Text style={styles.label}>Your name</Text>
             <TextInput
                 style={styles.input}
@@ -114,6 +124,11 @@ export function RoomModal({
                         autoCorrect={false}
                     />
                 </>
+            ) : solo ? (
+                <Text style={styles.note}>
+                    You will play against bots. Press Start in the lobby when
+                    you are ready.
+                </Text>
             ) : (
                 <Text style={styles.note}>
                     You will get a six-character code to share with friends.
@@ -129,7 +144,7 @@ export function RoomModal({
             ) : null}
 
             <DialogButton
-                title={joining ? "Join room" : "Create room"}
+                title={buttonTitle}
                 onPress={onSubmit}
                 disabled={!canSubmit}
             />
@@ -158,8 +173,15 @@ const RULES = [
         "Jack of Clubs",
         "The next player must draw 5 cards. After drawing, they still play a card or draw one from the deck. If the first card of a round is a 2 or J♣, the first player draws.",
     ],
-    ["Ace", "Play one more card that matches. If you cannot, draw one card."],
+    [
+        "Ace",
+        "Play one more card that matches. If you cannot, draw one card. If the Ace is your last card, draw one card: if you can play it, you win the round, otherwise the round goes on.",
+    ],
     ["10", "The next player is skipped."],
+    [
+        "Going out with a 2 or J♣",
+        "You still win the round. The next player draws 2 (or 5) cards, and those cards count toward their score.",
+    ],
     [
         "8",
         "Play it any time and choose a suit. The next player must follow that suit or play another 8.",

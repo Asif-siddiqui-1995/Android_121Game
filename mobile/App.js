@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useState} from "react";
-import {View} from "react-native";
+import {AppState, View} from "react-native";
 import {io} from "socket.io-client";
 import * as ScreenOrientation from "expo-screen-orientation";
 import {
@@ -23,10 +23,20 @@ import WaitingScreen from "./src/screens/WaitingScreen";
 import GameScreen from "./src/screens/GameScreen";
 import {useMusicLifecycle} from "./src/audio/music";
 
+// Permanent id for this player. Unlike socket.id it does not change when the
+// phone reconnects (after a call, screen lock or minimizing the app), so the
+// server can give the same seat back.
+function makePlayerId() {
+    const part = () => Math.random().toString(36).slice(2, 10);
+    return `p-${Date.now().toString(36)}-${part()}${part()}`;
+}
+const PLAYER_ID = makePlayerId();
+
 export default function App() {
     useMusicLifecycle();
 
     const socketRef = useRef(null);
+    const roomRef = useRef(null);
 
     // Poppins is bundled with the app, so text looks the same on every phone.
     const [fontsLoaded] = useFonts({
@@ -41,7 +51,7 @@ export default function App() {
     });
 
     const [connected, setConnected] = useState(false);
-    const [myId, setMyId] = useState(null);
+    const [myId, setMyId] = useState(PLAYER_ID);
     const [name, setName] = useState("");
     const [codeInput, setCodeInput] = useState("");
     const [room, setRoom] = useState(null);
@@ -53,24 +63,48 @@ export default function App() {
     const [selectedMatchId, setSelectedMatchId] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
 
+    // Keep the latest room available inside socket callbacks.
+    roomRef.current = room;
+
     useEffect(() => {
         const socket = io(SERVER_URL, {
             transports: ["websocket"],
+            auth: {playerId: PLAYER_ID},
+            reconnection: true,
+            reconnectionDelay: 500,
+            reconnectionDelayMax: 3000,
+            timeout: 20000,
         });
 
         socketRef.current = socket;
 
         socket.on("connect", () => {
             setConnected(true);
-            setMyId(socket.id);
+            setMyId(PLAYER_ID);
             setMessage("");
+
+            // After a reconnect the server already resends the table and our
+            // hand. This only checks the table still exists and we are in it.
+            const code = roomRef.current?.code;
+            if (code) {
+                socket.emit("room:get", {code}, (res) => {
+                    const stillSeated = res?.room?.players?.some(
+                        (p) => p.id === PLAYER_ID,
+                    );
+                    if (!res?.ok || !stillSeated) {
+                        setRoom(null);
+                        setMyHand([]);
+                        setPlayableIds([]);
+                        setMessage("The table is no longer available.");
+                    }
+                });
+            }
         });
 
         socket.on("disconnect", () => {
+            // Keep the hand on screen; the server sends it again on reconnect.
             setConnected(false);
-            setMyHand([]);
-            setPlayableIds([]);
-            setMessage("Disconnected from the server.");
+            setMessage("Connection lost. Reconnecting...");
         });
 
         socket.on("room:updated", (updatedRoom) => {
@@ -104,6 +138,18 @@ export default function App() {
             socket.disconnect();
             socketRef.current = null;
         };
+    }, []);
+
+    // When the app comes back to the foreground (after a call or minimizing),
+    // reconnect right away instead of waiting for the next retry.
+    useEffect(() => {
+        const subscription = AppState.addEventListener("change", (state) => {
+            if (state !== "active") return;
+            const socket = socketRef.current;
+            if (socket && !socket.connected) socket.connect();
+        });
+
+        return () => subscription.remove();
     }, []);
 
     // Messages are short notices, so clear them after a few seconds.
@@ -154,6 +200,10 @@ export default function App() {
     }
 
     const createRoom = () => requestRoom("room:create", {name: name.trim()});
+
+    // Solo game: you plus 1-5 bots. The server plays the bots.
+    const createSoloRoom = (bots) =>
+        requestRoom("room:create-solo", {name: name.trim(), bots});
 
     const joinRoom = () =>
         requestRoom("room:join", {
@@ -245,6 +295,7 @@ export default function App() {
                 codeInput={codeInput}
                 setCodeInput={setCodeInput}
                 onCreate={createRoom}
+                onCreateSolo={createSoloRoom}
                 onJoin={joinRoom}
                 onOpenHistory={() => setShowMatchHistory(true)}
                 onOpenSettings={() => setShowSettings(true)}

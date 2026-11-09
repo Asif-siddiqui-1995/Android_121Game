@@ -1,28 +1,40 @@
 {
   "expo": {
-    "name": "121",
-    "slug": "mobile",
+    "name": "121 Card Game",
+    "slug": "card-121",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true
-    },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+    "plugins": [
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e76ca3b8-f4ae-4239-85e2-e05715c03faa"
       }
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "plugins": [
-      "expo-font",
-      "expo-audio"
-    ]
-  }
+    "android": {
+      "package": "com.mohammadasifshahid.card121"
+    }
+  },
+  "ios": {
+    "bundleIdentifier": "com.yourname.card121",
+    "supportsTablet": true
+  },
+  "android": {
+    "package": "com.asif.card121",
+    "adaptiveIcon": {
+      "backgroundColor": "#E6F4FE",
+      "foregroundImage": "./assets/android-icon-foreground.png",
+      "backgroundImage": "./assets/android-icon-background.png",
+      "monochromeImage": "./assets/android-icon-monochrome.png"
+    }
+  },
+  "web": {
+    "favicon": "./assets/favicon.png"
+  },
+  "plugins": [
+    "expo-font",
+    "expo-audio"
+  ]
 }

@@ -3,14 +3,14 @@ import {StyleSheet, View} from "react-native";
 import Text from "../../../components/AppText";
 import {colors, isRedSuit, SUIT_SYMBOLS} from "../../../components/Theme";
 
-const CHIP_SIZE = 84;
+const CHIP_SIZE = 110;
 
 function StatusChips({chosenSuit, pendingDraw}) {
     return (
         <View style={styles.chips}>
             {chosenSuit ? (
                 <View style={styles.chip}>
-                    <Text style={styles.chipText}>Follow</Text>
+                    <Text style={styles.chipText}>Play</Text>
                     <Text
                         style={[
                             styles.chipSuit,
@@ -51,13 +51,13 @@ const styles = StyleSheet.create({
         borderColor: colors.saffron,
         borderRadius: 16,
         marginVertical: 5,
-        backgroundColor: "rgba(40,8,20,0.6)",
+        backgroundColor: "rgba(84, 19, 10, 0.86)",
     },
     chipDanger: {borderColor: colors.danger},
     chipText: {
         color: colors.saffron,
         fontWeight: "800",
-        fontSize: 20,
+        fontSize: 25,
         textAlign: "center",
     },
     chipSuit: {color: colors.ivory, fontSize: 34, marginTop: 2},
