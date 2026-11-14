@@ -7,16 +7,15 @@ const {
     playCard,
     drawCard,
     passTurn,
-    getCompletedMatchData,
-    claimMatchSave,
     markPlayerDisconnected,
     reconnectPlayer,
     removePlayer,
     getPrivateStates,
+    getPlayerRoomCode,
+    assertCanJoin,
     isBotTurn,
     runBotTurn,
 } = require("../services/roomService");
-const {saveCompletedMatch} = require("../services/matchService");
 
 const botTimers = new Map();
 
@@ -43,11 +42,21 @@ function scheduleBots(io, code) {
     const delay = 700 + Math.random() * 800;
     const timer = setTimeout(() => {
         botTimers.delete(code);
-        const result = runBotTurn(code);
-        if (result) broadcast(io, result.room);
+        try {
+            const result = runBotTurn(code);
+            if (result) broadcast(io, result.room);
+        } catch (error) {
+            // Never let a bot error crash the whole server.
+            console.error("Bot turn failed:", error);
+        }
     }, delay);
 
     botTimers.set(code, timer);
+}
+
+function clearBots(code) {
+    clearTimeout(botTimers.get(code));
+    botTimers.delete(code);
 }
 
 function broadcast(io, room) {
@@ -56,25 +65,29 @@ function broadcast(io, room) {
     scheduleBots(io, room.code);
 }
 
-async function saveMatchOnce(code) {
-    try {
-        if (!claimMatchSave(code)) return;
+// After removePlayer(): update the table, or tell everyone it closed.
+function handleRemoval(io, result) {
+    if (!result) return;
 
-        const matchData = getCompletedMatchData(code);
-        if (!matchData || matchData.rounds.length === 0) return;
-
-        const saved = await saveCompletedMatch(matchData);
-        console.log(
-            "Saved completed match",
-            matchData.roomCode,
-            saved?._id?.toString(),
-        );
-    } catch (error) {
-        console.error("Failed to save match:", error);
+    if (result.room) {
+        broadcast(io, result.room);
+    } else {
+        clearBots(result.code);
+        io.to(result.code).emit("room:closed");
     }
 }
 
 function registerGameSocket(io) {
+    // A player can only sit at one table. Leave the old one (if any) before
+    // creating or joining another, otherwise they would block both rooms.
+    function leaveCurrentRoom(socket, playerId, keepCode) {
+        const code = getPlayerRoomCode(playerId);
+        if (!code || code === keepCode) return;
+
+        socket.leave(code);
+        handleRemoval(io, removePlayer(playerId));
+    }
+
     io.on("connection", (socket) => {
         // Permanent id from the app. It stays the same when the phone
         // reconnects (socket.id does not). Falls back to socket.id.
@@ -101,6 +114,7 @@ function registerGameSocket(io) {
 
         socket.on("room:create", (payload = {}, ack = () => {}) => {
             try {
+                leaveCurrentRoom(socket, playerId);
                 const room = createRoom(playerId, payload.name);
                 socket.join(room.code);
 
@@ -113,6 +127,7 @@ function registerGameSocket(io) {
 
         socket.on("room:create-solo", (payload = {}, ack = () => {}) => {
             try {
+                leaveCurrentRoom(socket, playerId);
                 const room = createSoloRoom(
                     playerId,
                     payload.name,
@@ -129,6 +144,12 @@ function registerGameSocket(io) {
 
         socket.on("room:join", (payload = {}, ack = () => {}) => {
             try {
+                const target = assertCanJoin(
+                    playerId,
+                    payload.code,
+                    payload.name,
+                );
+                leaveCurrentRoom(socket, playerId, target.code);
                 const room = joinRoom(playerId, payload.code, payload.name);
                 socket.join(room.code);
 
@@ -161,7 +182,7 @@ function registerGameSocket(io) {
             }
         });
 
-        socket.on("game:play", async (payload = {}, ack = () => {}) => {
+        socket.on("game:play", (payload = {}, ack = () => {}) => {
             try {
                 const result = playCard(
                     playerId,
@@ -172,25 +193,17 @@ function registerGameSocket(io) {
 
                 ack({ok: true, room: result.room, roundOver: result.roundOver});
                 broadcast(io, result.room);
-
-                if (result.room.status === "finished") {
-                    await saveMatchOnce(result.room.code);
-                }
             } catch (error) {
                 ack({ok: false, error: error.message});
             }
         });
 
-        socket.on("game:draw", async (payload = {}, ack = () => {}) => {
+        socket.on("game:draw", (payload = {}, ack = () => {}) => {
             try {
                 const result = drawCard(playerId, payload.code);
 
                 ack({ok: true, room: result.room});
                 broadcast(io, result.room);
-
-                if (result.room.status === "finished") {
-                    await saveMatchOnce(result.room.code);
-                }
             } catch (error) {
                 ack({ok: false, error: error.message});
             }
@@ -208,28 +221,12 @@ function registerGameSocket(io) {
         });
 
         // A player leaves the table on purpose (the Lobby button).
-        socket.on("room:leave", async (payload = {}, ack = () => {}) => {
+        socket.on("room:leave", (_payload = {}, ack = () => {}) => {
             const result = removePlayer(playerId);
 
-            if (!result) {
-                ack({ok: true});
-                return;
-            }
-
-            socket.leave(result.code);
+            if (result) socket.leave(result.code);
             ack({ok: true});
-
-            if (result.room) {
-                broadcast(io, result.room);
-
-                if (result.room.status === "finished") {
-                    await saveMatchOnce(result.code);
-                }
-            } else {
-                // Room deleted: stop any pending bot move.
-                clearTimeout(botTimers.get(result.code));
-                botTimers.delete(result.code);
-            }
+            handleRemoval(io, result);
         });
 
         socket.on("disconnect", () => {
@@ -238,7 +235,9 @@ function registerGameSocket(io) {
             const stillConnected = io.sockets.adapter.rooms.get(playerId);
             if (stillConnected && stillConnected.size > 0) return;
 
-            const result = markPlayerDisconnected(playerId, io);
+            const result = markPlayerDisconnected(playerId, (removed) =>
+                handleRemoval(io, removed),
+            );
             if (!result) return;
 
             io.to(result.code).emit("room:updated", result.room);

@@ -1,6 +1,12 @@
 import {useCallback, useLayoutEffect, useRef, useState} from "react";
 import {measure, useLatest} from "../utils";
 
+// Base flight times (ms). Reduce motion makes them shorter and calmer
+// instead of removing them, because many Android phones report "reduce
+// motion" whenever battery saver is on and the game then looks frozen.
+const SPEED = {play: 300, opponent: 340, draw: 320, drawGap: 80};
+const CALM_FACTOR = 0.6;
+
 // Owns every "card flies from A to B" animation plus the refs used to
 // find A and B on screen.
 export default function useFlyingCards({
@@ -30,6 +36,8 @@ export default function useFlyingCards({
         return seatRefs.current[id];
     }, []);
 
+    const speed = reduceMotion ? CALM_FACTOR : 1;
+
     const launch = useCallback(async (flight) => {
         const origin = await measure(overlayRef);
         const ox = origin ? origin.cx - origin.w / 2 : 0;
@@ -53,13 +61,14 @@ export default function useFlyingCards({
                     cy: flight.to.cy - oy,
                     w: flight.to.w,
                 },
-                delay: flight.delay ?? 0,
-                duration: flight.duration ?? 420,
+                delay: Math.round((flight.delay ?? 0) * speed),
+                duration: Math.round((flight.duration ?? SPEED.draw) * speed),
+                calm: reduceMotion,
                 rotFrom: flight.rotFrom ?? 0,
                 rotTo: flight.rotTo ?? 0,
             },
         ]);
-    }, []);
+    }, [reduceMotion, speed]);
 
     const finishFlight = useCallback((id) => {
         const callback = doneCallbacks.current[id];
@@ -72,7 +81,7 @@ export default function useFlyingCards({
         async (card, from, suit) => {
             onPlayRef.current(card, suit);
 
-            if (reduceMotion || !from) return;
+            if (!from) return;
 
             setHiddenHandId(card.id);
             setHiddenTopId(card.id);
@@ -92,13 +101,13 @@ export default function useFlyingCards({
                 card,
                 from: {cx: from.cx, cy: from.cy, w: handW},
                 to: {cx: to.cx, cy: to.cy, w: tableW},
-                duration: 380,
+                duration: SPEED.play,
                 rotFrom: -6,
                 rotTo: 0,
                 onDone: clear,
             });
         },
-        [reduceMotion, handW, tableW, launch, onPlayRef],
+        [handW, tableW, launch, onPlayRef],
     );
 
     const opponentPlay = useCallback(
@@ -119,7 +128,7 @@ export default function useFlyingCards({
                 card: event.card,
                 from: {cx: from.cx, cy: from.cy, w: 30},
                 to: {cx: to.cx, cy: to.cy, w: tableW},
-                duration: 440,
+                duration: SPEED.opponent,
                 rotFrom: -28,
                 rotTo: 0,
                 onDone: () => setHiddenTopId(null),
@@ -145,8 +154,8 @@ export default function useFlyingCards({
                     card: null,
                     from: {cx: pile.cx, cy: pile.cy, w: tableW},
                     to: {cx: target.cx, cy: target.cy, w: mine ? handW : 28},
-                    delay: i * 110,
-                    duration: 420,
+                    delay: i * SPEED.drawGap,
+                    duration: SPEED.draw,
                     rotFrom: 0,
                     rotTo: (i % 2 ? 1 : -1) * (6 + i * 3),
                 });
@@ -164,12 +173,10 @@ export default function useFlyingCards({
         if (!event || event.seq === lastSeq.current) return;
         lastSeq.current = event.seq;
 
-        if (reduceMotion) return;
-
         if (event.type === "play" && event.playerId !== myId)
             opponentPlay(event);
         else if (event.type === "draw") drawFlights(event);
-    }, [room.lastEvent, reduceMotion, myId, opponentPlay, drawFlights]);
+    }, [room.lastEvent, myId, opponentPlay, drawFlights]);
 
     return {
         flights,

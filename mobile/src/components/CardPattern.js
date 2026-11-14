@@ -1,5 +1,7 @@
 import React, {useMemo} from "react";
-import {StyleSheet, Text, useWindowDimensions, View} from "react-native";
+import {StyleSheet, useWindowDimensions, View} from "react-native";
+import Svg, {G, Rect} from "react-native-svg";
+import {SuitShape} from "./Glyphs";
 
 const CELL = 64;
 const INK = "rgba(255,255,255,0.075)";
@@ -7,23 +9,27 @@ const INK = "rgba(255,255,255,0.075)";
 // Order repeats diagonally, like the doodle wallpaper in a chat app.
 const KINDS = [
     "card",
-    "♠",
+    "spades",
     "card",
-    "♥",
+    "hearts",
     "card",
-    "♦",
+    "diamonds",
     "card",
-    "♣",
+    "clubs",
     "card",
-    "♥",
+    "hearts",
     "card",
-    "♠",
+    "spades",
     "card",
-    "♣",
+    "clubs",
     "card",
-    "♦",
+    "diamonds",
 ];
-const CARD_SUITS = ["♠", "♥", "♣", "♦"];
+const CARD_SUITS = ["spades", "hearts", "clubs", "diamonds"];
+
+// Mini card outline size.
+const MINI_W = 22;
+const MINI_H = 30;
 
 function random(seed) {
     let s = seed;
@@ -33,39 +39,47 @@ function random(seed) {
     };
 }
 
+// One doodle, rotated around its own centre.
 function Item({item}) {
-    const common = {
-        position: "absolute",
-        left: item.x,
-        top: item.y,
-        transform: [{rotate: `${item.rot}deg`}],
-    };
-
     if (item.kind === "card") {
+        const cx = item.x + MINI_W / 2;
+        const cy = item.y + MINI_H / 2;
         return (
-            <View style={[common, styles.mini]}>
-                <Text style={styles.miniSuit}>{item.suit}</Text>
-            </View>
+            <G transform={`rotate(${item.rot} ${cx} ${cy})`}>
+                <Rect
+                    x={item.x + 0.75}
+                    y={item.y + 0.75}
+                    width={MINI_W - 1.5}
+                    height={MINI_H - 1.5}
+                    rx={4}
+                    fill="none"
+                    stroke={INK}
+                    strokeWidth={1.5}
+                />
+                <G
+                    transform={`translate(${cx - 4.5} ${cy - 4.5}) scale(0.09)`}
+                >
+                    <SuitShape suit={item.suit} color={INK} />
+                </G>
+            </G>
         );
     }
 
+    // A loose suit symbol, about the size the old text glyph had.
+    const size = item.size * 0.8;
+    const cx = item.x + size / 2;
+    const cy = item.y + size / 2;
     return (
-        <Text
-            style={[
-                common,
-                {
-                    color: INK,
-                    fontSize: item.size,
-                    fontWeight: "700",
-                },
-            ]}
+        <G
+            transform={`rotate(${item.rot} ${cx} ${cy}) translate(${item.x} ${item.y}) scale(${size / 100})`}
         >
-            {item.kind}
-        </Text>
+            <SuitShape suit={item.kind} color={INK} />
+        </G>
     );
 }
 
-// A tiled, softly rotated wallpaper of card symbols.
+// A tiled, softly rotated wallpaper of card symbols, drawn as shapes so
+// phone text settings (high contrast text, themes) can't recolour it.
 function CardPattern() {
     const {width, height} = useWindowDimensions();
 
@@ -94,25 +108,21 @@ function CardPattern() {
     }, [width, height]);
 
     return (
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            {items.map((item) => (
-                <Item key={item.key} item={item} />
-            ))}
+        // The wallpaper never changes, so let the GPU keep it as one picture
+        // instead of redrawing it behind every animation.
+        <View
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+            renderToHardwareTextureAndroid
+            shouldRasterizeIOS
+        >
+            <Svg width={width} height={height}>
+                {items.map((item) => (
+                    <Item key={item.key} item={item} />
+                ))}
+            </Svg>
         </View>
     );
 }
 
 export default React.memo(CardPattern);
-
-const styles = StyleSheet.create({
-    mini: {
-        width: 22,
-        height: 30,
-        borderRadius: 4,
-        borderWidth: 1.5,
-        borderColor: INK,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    miniSuit: {color: INK, fontSize: 12},
-});

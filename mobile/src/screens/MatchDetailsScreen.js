@@ -8,7 +8,7 @@ import {
     View,
 } from "react-native";
 
-import {SERVER_URL} from "../config";
+import {getMatch} from "../storage/matchHistory";
 import Text from "../components/AppText";
 import PlayingCard from "../components/PlayingCard";
 import ScreenBackground from "../components/ScreenBackground";
@@ -387,21 +387,10 @@ export default function MatchDetailsScreen({matchId, onBack}) {
             setError("");
 
             try {
-                const response = await fetch(
-                    `${SERVER_URL}/api/matches/${encodeURIComponent(matchId)}`,
-                );
-                const result = await response.json();
-
-                if (!response.ok || result.success === false) {
-                    throw new Error(
-                        result.message || "Unable to load match details.",
-                    );
-                }
-
-                const matchData = result.data ?? result.match ?? result;
+                const matchData = await getMatch(matchId);
 
                 if (!matchData || !Array.isArray(matchData.players)) {
-                    throw new Error("The server returned invalid match data.");
+                    throw new Error("This match is no longer saved on this phone.");
                 }
 
                 setMatch(matchData);

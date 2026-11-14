@@ -1,7 +1,8 @@
 import React from "react";
 import {Modal, Pressable, StyleSheet, View} from "react-native";
 import Text from "./AppText";
-import {colors, isRedSuit, SUIT_ORDER, SUIT_SYMBOLS} from "../components/Theme";
+import {colors, isRedSuit, SUIT_ORDER} from "../components/Theme";
+import {SuitIcon} from "./Glyphs";
 import UIButton from "./UIButton";
 
 export default function SuitPicker({visible, onPick, onCancel}) {
@@ -32,18 +33,15 @@ export default function SuitPicker({visible, onPick, onCancel}) {
                                     pressed && {opacity: 0.7},
                                 ]}
                             >
-                                <Text
-                                    style={[
-                                        styles.symbol,
-                                        {
-                                            color: isRedSuit(suit)
-                                                ? colors.suitRed
-                                                : colors.ink,
-                                        },
-                                    ]}
-                                >
-                                    {SUIT_SYMBOLS[suit]}
-                                </Text>
+                                <SuitIcon
+                                    suit={suit}
+                                    size={34}
+                                    color={
+                                        isRedSuit(suit)
+                                            ? colors.suitRed
+                                            : colors.ink
+                                    }
+                                />
                             </Pressable>
                         ))}
                     </View>
@@ -90,5 +88,4 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    symbol: {fontSize: 34},
 });

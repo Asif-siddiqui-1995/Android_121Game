@@ -22,6 +22,7 @@ import SettingsScreen from "./src/screens/SettingScreen";
 import WaitingScreen from "./src/screens/WaitingScreen";
 import GameScreen from "./src/screens/GameScreen";
 import {useMusicLifecycle} from "./src/audio/music";
+import {saveMatch} from "./src/storage/matchHistory";
 
 // Permanent id for this player. Unlike socket.id it does not change when the
 // phone reconnects (after a call, screen lock or minimizing the app), so the
@@ -109,6 +110,9 @@ export default function App() {
 
         socket.on("room:updated", (updatedRoom) => {
             setRoom(updatedRoom);
+            // A finished match comes with its full result: keep it in this
+            // phone's match history. saveMatch ignores repeats.
+            if (updatedRoom?.matchResult) saveMatch(updatedRoom.matchResult);
         });
 
         // Private hand and which cards can be played right now.

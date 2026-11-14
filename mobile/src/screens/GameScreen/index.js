@@ -8,7 +8,7 @@ import useActionLog from "./hooks/useActionLog";
 import useFlyingCards from "./hooks/useFlyingCards";
 import useGameDerived from "./hooks/useGameDerived";
 import useHandDelays from "./hooks/useHandDelays";
-import useReduceMotion from "./hooks/useReduceMotion";
+import useReduceMotion from "../../hooks/useReduceMotion";
 import ActionsBar from "./parts/ActionsBar";
 import HandFan from "./parts/HandFan";
 import LeaveModal from "./parts/LeaveModal";
@@ -36,7 +36,8 @@ export default function GameScreen({
     const {height} = useWindowDimensions();
 
     // Card sizes follow the height, because a landscape phone is short.
-    const handW = clamp(Math.round(height * 0.155), 44, 66);
+    // The upper limit lets tablets get bigger cards instead of tiny ones.
+    const handW = clamp(Math.round(height * 0.155), 44, 96);
     const handH = cardHeight(handW);
     const tableW = handW;
 

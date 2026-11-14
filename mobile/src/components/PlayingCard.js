@@ -1,66 +1,35 @@
-import React from "react";
-import {View, Text, Pressable, StyleSheet} from "react-native";
+import React, {memo} from "react";
+import {View, Pressable, StyleSheet} from "react-native";
+import {GlyphText, SuitIcon, suitKey} from "./Glyphs";
 
-const CARD_SIZES = {
-    sm: {
-        width: 42,
-        height: 62,
-        rank: 13,
-        centerSuit: 25,
-        radius: 6,
-    },
-    md: {
-        width: 66,
-        height: 96,
-        rank: 18,
-        centerSuit: 43,
-        radius: 8,
-    },
-    lg: {
-        width: 96,
-        height: 138,
-        rank: 24,
-        centerSuit: 65,
-        radius: 10,
-    },
-};
+// Every card is drawn from its width, so it fits the layout on every screen.
+// Height always follows the same ratio (see GameScreen/utils CARD_RATIO).
+const CARD_RATIO = 1.45;
 
-const SUITS = {
-    hearts: "♥",
-    diamonds: "♦",
-    clubs: "♣",
-    spades: "♠",
-    h: "♥",
-    d: "♦",
-    c: "♣",
-    s: "♠",
-    "♥": "♥",
-    "♦": "♦",
-    "♣": "♣",
-    "♠": "♠",
-};
-
-function getSuit(suit) {
-    const key = String(suit).toLowerCase();
-    return SUITS[key] || suit;
-}
+const PRESET_WIDTHS = {sm: 42, md: 66, lg: 96};
+const BACK_GOLD = "#E8BB65";
 
 function isRed(suit) {
-    const key = String(suit).toLowerCase();
+    const key = suitKey(suit);
+    return key === "hearts" || key === "diamonds";
+}
 
-    return (
-        key === "hearts" ||
-        key === "diamonds" ||
-        key === "h" ||
-        key === "d" ||
-        key === "♥" ||
-        key === "♦"
-    );
+function dims(width, size) {
+    const w = Math.round(width || PRESET_WIDTHS[size] || PRESET_WIDTHS.md);
+    return {
+        width: w,
+        height: Math.round(w * CARD_RATIO),
+        rank: Math.max(9, Math.round(w * 0.3)),
+        centerSuit: Math.round(w * 0.68),
+        radius: Math.max(4, Math.round(w * 0.12)),
+        inset: Math.max(3, Math.round(w * 0.08)),
+    };
 }
 
 // Card back
-export function CardBack({size = "md", style}) {
-    const s = CARD_SIZES[size] || CARD_SIZES.md;
+export const CardBack = memo(function CardBack({size = "md", width, style}) {
+    const s = dims(width, size);
+    const suitSize = Math.round(s.width * 0.24);
 
     return (
         <View
@@ -70,35 +39,24 @@ export function CardBack({size = "md", style}) {
                     width: s.width,
                     height: s.height,
                     borderRadius: s.radius,
+                    padding: Math.max(2, Math.round(s.width * 0.06)),
                 },
                 style,
             ]}
         >
             <View style={styles.backInner}>
-                <Text style={styles.backSuit}>♠</Text>
-
-                {/* <Text
-                    style={[
-                        styles.backLogo,
-                        {
-                            fontSize:
-                                size === "sm" ? 12 : size === "lg" ? 22 : 17,
-                        },
-                    ]}
-                >
-                    121
-                </Text> */}
-
-                <Text style={styles.backSuit}>♥</Text>
+                <SuitIcon suit="spades" size={suitSize} color={BACK_GOLD} />
+                <SuitIcon suit="hearts" size={suitSize} color={BACK_GOLD} />
             </View>
         </View>
     );
-}
+});
 
 // Playing card
-export default function PlayingCard({
+function PlayingCard({
     card,
     size = "md",
+    width,
     playable = false,
     dimmed = false,
     onPress,
@@ -106,10 +64,16 @@ export default function PlayingCard({
 }) {
     if (!card) return null;
 
-    const s = CARD_SIZES[size] || CARD_SIZES.md;
-
-    const suit = getSuit(card.suit);
+    const s = dims(width, size);
     const cardColor = isRed(card.suit) ? "#C32643" : "#191919";
+    const rank = (
+        <GlyphText
+            text={String(card.rank)}
+            size={s.rank}
+            color={cardColor}
+            letterSpacing={-s.rank * 0.06}
+        />
+    );
 
     const cardFace = (
         <View
@@ -127,48 +91,25 @@ export default function PlayingCard({
                 style,
             ]}
         >
-            {/* Top-left rank ONLY */}
-            <View style={styles.topCorner}>
-                <Text
-                    style={[
-                        styles.rank,
-                        {
-                            color: cardColor,
-                            fontSize: s.rank,
-                        },
-                    ]}
-                >
-                    {card.rank}
-                </Text>
+            <View style={[styles.topCorner, {top: s.inset, left: s.inset}]}>
+                {rank}
             </View>
 
-            {/* Single large suit in the centre */}
             <View style={styles.center}>
-                <Text
-                    style={{
-                        color: cardColor,
-                        fontSize: s.centerSuit,
-                        fontWeight: "400",
-                        lineHeight: s.centerSuit + 5,
-                    }}
-                >
-                    {suit}
-                </Text>
+                <SuitIcon
+                    suit={card.suit}
+                    size={s.centerSuit}
+                    color={cardColor}
+                />
             </View>
 
-            {/* Bottom-right rank ONLY */}
-            <View style={styles.bottomCorner}>
-                <Text
-                    style={[
-                        styles.rank,
-                        {
-                            color: cardColor,
-                            fontSize: s.rank,
-                        },
-                    ]}
-                >
-                    {card.rank}
-                </Text>
+            <View
+                style={[
+                    styles.bottomCorner,
+                    {bottom: s.inset, right: s.inset},
+                ]}
+            >
+                {rank}
             </View>
         </View>
     );
@@ -193,50 +134,37 @@ export default function PlayingCard({
     );
 }
 
+export default memo(PlayingCard);
+
 const styles = StyleSheet.create({
     card: {
         backgroundColor: "#FFFEFA",
         alignItems: "center",
         justifyContent: "center",
-        position: "relative",
         overflow: "hidden",
 
         shadowColor: "#000",
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
+        shadowOffset: {width: 0, height: 2},
         shadowOpacity: 0.14,
         shadowRadius: 3,
-        elevation: 3,
+        elevation: 2,
     },
 
     topCorner: {
         position: "absolute",
-        top: 5,
-        left: 6,
         alignItems: "center",
-        justifyContent: "center",
         zIndex: 2,
     },
 
     bottomCorner: {
         position: "absolute",
-        bottom: 5,
-        right: 6,
         alignItems: "center",
-        justifyContent: "center",
         transform: [{rotate: "180deg"}],
         zIndex: 2,
     },
 
-    rank: {
-        fontWeight: "900",
-        textAlign: "center",
-    },
-
     center: {
-        position: "absolute",
+        ...StyleSheet.absoluteFillObject,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -245,7 +173,7 @@ const styles = StyleSheet.create({
         shadowColor: "#E5AF39",
         shadowOpacity: 0.5,
         shadowRadius: 6,
-        elevation: 7,
+        elevation: 5,
     },
 
     cardBack: {
@@ -254,16 +182,12 @@ const styles = StyleSheet.create({
         borderColor: "#D6A64D",
         alignItems: "center",
         justifyContent: "center",
-        padding: 4,
 
         shadowColor: "#000",
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
+        shadowOffset: {width: 0, height: 2},
         shadowOpacity: 0.15,
         shadowRadius: 3,
-        elevation: 3,
+        elevation: 2,
     },
 
     backInner: {
@@ -274,16 +198,5 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-evenly",
         borderRadius: 4,
-    },
-
-    backSuit: {
-        color: "#E8BB65",
-        fontSize: 18,
-    },
-
-    backLogo: {
-        color: "#FFE4A5",
-        fontWeight: "900",
-        letterSpacing: 2,
     },
 });

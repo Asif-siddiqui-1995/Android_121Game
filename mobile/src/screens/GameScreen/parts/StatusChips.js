@@ -1,30 +1,69 @@
 import React, {memo} from "react";
 import {StyleSheet, View} from "react-native";
 import Text from "../../../components/AppText";
-import {colors, isRedSuit, SUIT_SYMBOLS} from "../../../components/Theme";
+import {SuitIcon} from "../../../components/Glyphs";
+import {colors, isRedSuit} from "../../../components/Theme";
 
-const CHIP_SIZE = 110;
+// Chips sit side by side and are sized from the table card, so two chips
+// never push the table off a short landscape screen.
+function StatusChips({chosenSuit, pendingDraw, size = 90}) {
+    const chip = {
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.15),
+    };
+    const label = {fontSize: Math.round(size * 0.22)};
 
-function StatusChips({chosenSuit, pendingDraw}) {
     return (
-        <View style={styles.chips}>
+        <View style={[styles.chips, {minWidth: size}]}>
             {chosenSuit ? (
-                <View style={styles.chip}>
-                    <Text style={styles.chipText}>Play</Text>
-                    <Text
-                        style={[
-                            styles.chipSuit,
-                            isRedSuit(chosenSuit) && styles.danger,
-                        ]}
-                    >
-                        {SUIT_SYMBOLS[chosenSuit]}
-                    </Text>
+                <View style={[styles.chip, chip]}>
+                    <Text style={[styles.chipText, label]}>Play</Text>
+                    <SuitIcon
+                        suit={chosenSuit}
+                        size={Math.round(size * 0.32)}
+                        color={isRedSuit(chosenSuit) ? colors.danger : colors.ivory}
+                        style={styles.chipSuit}
+                    />
                 </View>
             ) : null}
             {pendingDraw > 0 ? (
-                <View style={[styles.chip, styles.chipDanger]}>
-                    <Text style={[styles.chipText, styles.danger]}>
-                        Draw {pendingDraw}
+                // A 2 or J♣ was played: this is the most important thing on
+                // the table, so it is bigger than the other chip and shows
+                // the number large.
+                <View
+                    style={[
+                        styles.chip,
+                        styles.chipDanger,
+                        {
+                            width: Math.round(size * 1.5),
+                            height: Math.round(size * 1.25),
+                            borderRadius: Math.round(size * 0.18),
+                        },
+                    ]}
+                >
+                    <Text
+                        numberOfLines={1}
+                        style={[
+                            styles.chipText,
+                            styles.danger,
+                            {fontSize: Math.round(size * 0.22)},
+                        ]}
+                    >
+                        DRAW
+                    </Text>
+                    <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        style={[
+                            styles.drawNumber,
+                            {
+                                fontSize: Math.round(size * 0.6),
+                                lineHeight: Math.round(size * 0.72),
+                            },
+                        ]}
+                    >
+                        +{pendingDraw}
                     </Text>
                 </View>
             ) : null}
@@ -36,30 +75,35 @@ export default memo(StatusChips);
 
 const styles = StyleSheet.create({
     chips: {
-        marginLeft: 16,
-        minWidth: CHIP_SIZE + 16,
+        flexDirection: "row",
+        marginLeft: 12,
+        gap: 8,
         alignItems: "center",
-        justifyContent: "center",
     },
     chip: {
-        width: CHIP_SIZE,
-        height: CHIP_SIZE,
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         borderWidth: 2.5,
         borderColor: colors.saffron,
-        borderRadius: 16,
-        marginVertical: 5,
+        paddingHorizontal: 4,
         backgroundColor: "rgba(84, 19, 10, 0.86)",
     },
-    chipDanger: {borderColor: colors.danger},
+    chipDanger: {
+        borderColor: colors.danger,
+        borderWidth: 3,
+        backgroundColor: "rgba(110, 14, 14, 0.92)",
+    },
+    drawNumber: {
+        color: colors.ivory,
+        fontWeight: "900",
+        textAlign: "center",
+        includeFontPadding: false,
+    },
     chipText: {
         color: colors.saffron,
         fontWeight: "800",
-        fontSize: 25,
         textAlign: "center",
     },
-    chipSuit: {color: colors.ivory, fontSize: 34, marginTop: 2},
+    chipSuit: {marginTop: 4},
     danger: {color: colors.danger},
 });

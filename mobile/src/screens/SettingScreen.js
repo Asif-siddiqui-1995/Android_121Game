@@ -3,6 +3,7 @@ import {Pressable, ScrollView, StyleSheet, Switch, View} from "react-native";
 
 import {SERVER_URL} from "../config";
 import Text, {TextInput} from "../components/AppText";
+import {GearIcon} from "../components/Glyphs";
 import {RulesModal} from "../components/LobbyModals";
 import ScreenBackground from "../components/ScreenBackground";
 import {useSettings} from "../components/SettingContext";
@@ -127,7 +128,7 @@ export default function SettingsScreen({
                     </View>
 
                     <View style={styles.titleBlock}>
-                        <Text style={styles.gear}>⚙</Text>
+                        <GearIcon size={36} color={C.gold} style={styles.gear} />
                         <Text style={styles.title}>Settings</Text>
                         <View style={styles.underline} />
                     </View>
@@ -289,7 +290,7 @@ const styles = StyleSheet.create({
     backText: {color: C.gold, fontSize: 15, fontWeight: "600"},
 
     titleBlock: {alignItems: "center", marginTop: -2, marginBottom: 14},
-    gear: {color: C.gold, fontSize: 34, lineHeight: 40},
+    gear: {marginBottom: 4},
     title: {
         color: C.cream2,
         fontSize: 28,

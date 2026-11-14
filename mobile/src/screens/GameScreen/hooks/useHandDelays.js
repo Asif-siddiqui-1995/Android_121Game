@@ -17,7 +17,7 @@ export default function useHandDelays(hand) {
 
         for (const card of hand) {
             if (seen.current.has(card.id)) continue;
-            result[card.id] = firstDeal ? index * 45 : 420 + index * 110;
+            result[card.id] = firstDeal ? index * 40 : 300 + index * 80;
             index += 1;
         }
         return result;

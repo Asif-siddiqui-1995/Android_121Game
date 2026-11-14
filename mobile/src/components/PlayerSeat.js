@@ -1,5 +1,5 @@
-import React, {useEffect, useRef, useState} from "react";
-import {AccessibilityInfo, Animated, StyleSheet, View} from "react-native";
+import React, {useEffect, useRef} from "react";
+import {Animated, StyleSheet, View} from "react-native";
 import Text from "./AppText";
 import Avatar from "./Avatar";
 import {colors} from "../components/Theme";
@@ -29,21 +29,9 @@ export function ScoreBar({score = 0, limit = 121, width}) {
 
 export default function PlayerSeat({player, isCurrent, limit = 121}) {
     const pulse = useRef(new Animated.Value(0)).current;
-    const [reduceMotion, setReduceMotion] = useState(false);
-
-    useEffect(() => {
-        let mounted = true;
-        AccessibilityInfo.isReduceMotionEnabled()
-            .then((value) => mounted && setReduceMotion(value))
-            .catch(() => {});
-        return () => {
-            mounted = false;
-        };
-    }, []);
-
     // The pulse is the one ambient motion: it marks whose turn it is.
     useEffect(() => {
-        if (!isCurrent || reduceMotion) {
+        if (!isCurrent) {
             pulse.setValue(isCurrent ? 1 : 0);
             return undefined;
         }
@@ -64,7 +52,7 @@ export default function PlayerSeat({player, isCurrent, limit = 121}) {
         );
         loop.start();
         return () => loop.stop();
-    }, [isCurrent, reduceMotion, pulse]);
+    }, [isCurrent, pulse]);
 
     return (
         <View style={[styles.seat, player.eliminated && {opacity: 0.4}]}>

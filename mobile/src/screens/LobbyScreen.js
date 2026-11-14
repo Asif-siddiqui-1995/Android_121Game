@@ -12,6 +12,7 @@ import ScreenBackground from "../components/ScreenBackground";
 import {colors} from "../components/Theme";
 import {Ionicons} from "@expo/vector-icons";
 import PlayingCard from "../components/PlayingCard";
+import {GearIcon, GlyphText, SuitIcon} from "../components/Glyphs";
 import {RoomModal, RulesModal} from "../components/LobbyModals";
 import {useScreenMusic} from "../audio/music";
 
@@ -22,61 +23,11 @@ const L = {
     cream: "#FFF6DD",
 };
 
+const HERO_HEIGHT = 300;
+const HERO_DESIGN_WIDTH = 390;
+
 const MIN_BOTS = 1;
 const MAX_BOTS = 5;
-
-// Gold-filled text with a deep red outline, drawn by stacking offset copies.
-function OutlinedText({children, size, fill, stroke, shadow, width = 4}) {
-    const base = {
-        fontSize: size,
-        fontWeight: "900",
-        letterSpacing: -3,
-        lineHeight: size * 1.15,
-    };
-    const offsets = Array.from({length: 12}, (_, i) => {
-        const a = (i / 12) * Math.PI * 2;
-        return [Math.cos(a) * width, Math.sin(a) * width];
-    });
-
-    return (
-        <View>
-            <Text
-                style={[
-                    base,
-                    styles.abs,
-                    {color: shadow, left: 0, top: width + 5},
-                ]}
-            >
-                {children}
-            </Text>
-            {offsets.map(([dx, dy], i) => (
-                <Text
-                    key={i}
-                    style={[
-                        base,
-                        styles.abs,
-                        {color: stroke, left: dx, top: dy},
-                    ]}
-                >
-                    {children}
-                </Text>
-            ))}
-            <Text
-                style={[
-                    base,
-                    {
-                        color: fill,
-                        textShadowColor: "rgba(255,210,60,0.7)",
-                        textShadowRadius: 14,
-                        textShadowOffset: {width: 0, height: 0},
-                    },
-                ]}
-            >
-                {children}
-            </Text>
-        </View>
-    );
-}
 
 const PLAY_TRIANGLE = (
     <View
@@ -162,6 +113,9 @@ function GameButton({
                                 }
                             >
                                 <Text
+                                    numberOfLines={1}
+                                    adjustsFontSizeToFit
+                                    minimumFontScale={0.7}
                                     style={[
                                         styles.btnTitle,
                                         compact && {fontSize: 18},
@@ -312,6 +266,8 @@ export default function LobbyScreen({
     onOpenSettings,
 }) {
     const {width, height} = useWindowDimensions();
+    // The logo is drawn for a 390pt-wide phone; shrink it on narrower ones.
+    const heroScale = Math.min(1, width / HERO_DESIGN_WIDTH);
     const [roomMode, setRoomMode] = useState(null); // "create" | "join" | "solo" | null
     const [botCount, setBotCount] = useState(1);
     const [showRules, setShowRules] = useState(false);
@@ -351,59 +307,75 @@ export default function LobbyScreen({
                             accessibilityRole="button"
                             accessibilityLabel="Settings"
                         >
-                            <Text style={styles.gearText}>⚙</Text>
+                            <GearIcon size={30} color={L.gold} />
                         </Pressable>
                     </View>
 
                     {/* Logo */}
-                    <View style={styles.hero}>
-                        {HERO_CARDS.map(({card, dx, rot, y}) => (
-                            <View
-                                key={card.id}
-                                style={[
-                                    styles.heroCard,
-                                    {
-                                        marginLeft: dx - 49,
-                                        top: y,
-                                        transform: [{rotate: rot}],
-                                    },
-                                ]}
-                            >
-                                <PlayingCard card={card} size="lg" />
+                    <View style={{height: HERO_HEIGHT * heroScale}}>
+                        <View
+                            style={[
+                                styles.hero,
+                                {
+                                    width: Math.max(width, HERO_DESIGN_WIDTH),
+                                    transform: [{scale: heroScale}],
+                                    transformOrigin: "top",
+                                },
+                            ]}
+                        >
+                            {HERO_CARDS.map(({card, dx, rot, y}) => (
+                                <View
+                                    key={card.id}
+                                    style={[
+                                        styles.heroCard,
+                                        {
+                                            marginLeft: dx - 49,
+                                            top: y,
+                                            transform: [{rotate: rot}],
+                                        },
+                                    ]}
+                                >
+                                    <PlayingCard card={card} size="lg" />
+                                </View>
+                            ))}
+
+                            <View style={styles.plate} />
+                            {/* Drawn as shapes so phone text settings can't
+                                recolour it (see components/Glyphs.js). */}
+                            <View style={styles.logo}>
+                                <GlyphText
+                                    text="1 2 1"
+                                    weight={900}
+                                    size={135}
+                                    letterSpacing={-3}
+                                    color="#FFC928"
+                                    stroke="#B3151B"
+                                    strokeWidth={8}
+                                    shadowColor="#5A0A10"
+                                    shadowOffset={9}
+                                />
                             </View>
-                        ))}
 
-                        <View style={styles.plate} />
-                        <View style={{alignItems: "center", marginTop: 95}}>
-                            <OutlinedText
-                                size={135}
-                                fill="#FFC928"
-                                stroke="#B3151B"
-                                shadow="#5A0A10"
-                            >
-                                1 2 1
-                            </OutlinedText>
-                        </View>
+                            <Text style={styles.crown}>👑</Text>
 
-                        <Text style={styles.crown}>👑</Text>
-
-                        <View style={styles.ribbonWrap}>
-                            <View
-                                style={[
-                                    styles.tail,
-                                    {left: "3%", transform: [{skewY: "-6deg"}]},
-                                ]}
-                            />
-                            <View
-                                style={[
-                                    styles.tail,
-                                    {right: "3%", transform: [{skewY: "6deg"}]},
-                                ]}
-                            />
-                            <View style={styles.ribbon}>
-                                <Text style={styles.ribbonSuit}>♠</Text>
-                                <Text style={styles.ribbonText}>Card Game</Text>
-                                <Text style={styles.ribbonSuit}>♣</Text>
+                            <View style={styles.ribbonWrap}>
+                                <View
+                                    style={[
+                                        styles.tail,
+                                        {left: "3%", transform: [{skewY: "-6deg"}]},
+                                    ]}
+                                />
+                                <View
+                                    style={[
+                                        styles.tail,
+                                        {right: "3%", transform: [{skewY: "6deg"}]},
+                                    ]}
+                                />
+                                <View style={styles.ribbon}>
+                                    <SuitIcon suit="spades" size={24} color={L.gold} />
+                                    <Text style={styles.ribbonText}>Card Game</Text>
+                                    <SuitIcon suit="clubs" size={24} color={L.gold} />
+                                </View>
                             </View>
                         </View>
                     </View>
@@ -563,7 +535,6 @@ export default function LobbyScreen({
 
 const styles = StyleSheet.create({
     flex: {flex: 1},
-    abs: {position: "absolute"},
     scroll: {flexGrow: 1, justifyContent: "space-between"},
     gearRow: {
         flexDirection: "row",
@@ -583,9 +554,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    gearText: {color: L.gold, fontSize: 28, lineHeight: 34},
 
-    hero: {height: 300, alignItems: "center", marginTop: 0},
+    logo: {alignItems: "center", marginTop: 113},
+    hero: {height: HERO_HEIGHT, alignItems: "center", alignSelf: "center"},
     heroCard: {position: "absolute", left: "50%"},
     plate: {
         position: "absolute",
@@ -636,7 +607,6 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         paddingHorizontal: 14,
     },
-    ribbonSuit: {color: L.gold, fontSize: 26},
     ribbonText: {
         color: "#FFFFFF",
         fontStyle: "italic",

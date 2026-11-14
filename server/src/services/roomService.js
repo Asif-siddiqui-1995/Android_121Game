@@ -2,6 +2,8 @@ const crypto = require("node:crypto");
 const {createDeck, shuffleDeck} = require("../game/deck");
 
 const rooms = new Map();
+// playerId -> room code, so lookups by player do not scan every room.
+const playerRooms = new Map();
 const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2;
 const ELIMINATION_SCORE = 121;
@@ -22,11 +24,6 @@ const SUIT_ALIASES = {
 };
 const RANK_ALIASES = {ACE: "A", 1: "A", JACK: "J", QUEEN: "Q", KING: "K"};
 const BOT_NAMES = ["Nancy", "Maya", "Rashmi", "Zoya", "Tanu"];
-
-// ---------------------------------------------------------------------------
-// Card helpers. Cards are normalised once when dealt, so the rest of the
-// code can rely on rank: "A","2".."10","J","Q","K" and suit: "clubs", etc.
-// ---------------------------------------------------------------------------
 
 function normalizeSuit(rawSuit) {
     const raw = String(rawSuit ?? "")
@@ -70,7 +67,7 @@ function penaltyOf(card) {
 }
 
 function cloneData(data) {
-    return JSON.parse(JSON.stringify(data));
+    return structuredClone(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +95,23 @@ function findRoom(code) {
     const normalized =
         typeof code === "string" ? code.trim().toUpperCase() : "";
     return rooms.get(normalized);
+}
+
+// The room a (human) player is currently seated in, if any.
+function findPlayerRoom(playerId) {
+    const code = playerRooms.get(playerId);
+    const room = code ? rooms.get(code) : null;
+
+    if (!room || !room.players.some((player) => player.id === playerId)) {
+        playerRooms.delete(playerId);
+        return null;
+    }
+
+    return room;
+}
+
+function getPlayerRoomCode(playerId) {
+    return findPlayerRoom(playerId)?.code ?? null;
 }
 
 function activePlayers(room) {
@@ -135,6 +149,9 @@ function topCardOf(round) {
 function canPlay(round, card) {
     // After drawing a card, only that drawn card may be played (or pass).
     if (round.drawnCardId && card.id !== round.drawnCardId) return false;
+
+    // 2-player 10: the turn came straight back, so the player must draw first.
+    if (round.tenDraw) return false;
 
     // Facing a draw penalty: the player must draw, unless stacking is allowed.
     if (round.pendingDraw > 0) {
@@ -176,6 +193,7 @@ function advanceTurn(room, steps = 1) {
     round.drawnCardId = null;
     round.extraTurn = false;
     round.aceFinish = false;
+    round.tenDraw = false;
 }
 
 // Tells clients what just happened so they can animate it (a card flying
@@ -225,11 +243,15 @@ function getPublicRoom(room) {
         canPass: Boolean(round?.drawnCardId) && !round?.aceFinish,
         aceFinish: Boolean(round?.aceFinish),
         extraTurn: Boolean(round?.extraTurn),
+        tenDraw: Boolean(round?.tenDraw),
         recentDiscards: round ? round.discardPile.slice(-6) : [],
         lastEvent: room.lastEvent || null,
         lastAction: round?.lastAction ?? "",
         roundResult: round?.result ?? null,
         gameWinnerId: room.gameWinnerId || null,
+        // Sent once the match is over. Each phone stores it in its own
+        // match history (there is no server database).
+        matchResult: getMatchResult(room),
     };
 }
 
@@ -281,37 +303,53 @@ function createRoom(playerId, rawName) {
         round: null,
         gameWinnerId: null,
         history: [],
-        matchSaved: false,
+        finishedAt: null,
         eventSeq: 0,
         lastEvent: null,
         solo: false,
     };
 
     rooms.set(code, room);
+    playerRooms.set(playerId, code);
     return getPublicRoom(room);
 }
 
-function joinRoom(playerId, rawCode, rawName) {
+// Throws if the player cannot join this room. Returns the room otherwise.
+function assertCanJoin(playerId, rawCode, rawName) {
     const room = findRoom(rawCode);
-    const name = cleanName(rawName);
 
-    if (!name) throw new Error("Enter a player name.");
+    if (!cleanName(rawName)) throw new Error("Enter a player name.");
     if (!room) throw new Error("Room not found. Check the invite code.");
+
+    // Already seated here (e.g. tapped Join twice): always fine.
+    if (room.players.some((player) => player.id === playerId)) return room;
+
     if (room.solo) throw new Error("This is a solo game.");
     if (room.status !== "waiting") {
         throw new Error("This game has already started.");
     }
+    if (room.players.length >= MAX_PLAYERS) {
+        throw new Error("This room is full.");
+    }
+
+    return room;
+}
+
+function joinRoom(playerId, rawCode, rawName) {
+    const room = assertCanJoin(playerId, rawCode, rawName);
 
     if (room.players.some((player) => player.id === playerId)) {
         return getPublicRoom(room);
     }
 
-    if (room.players.length >= MAX_PLAYERS) {
-        throw new Error("This room is full.");
-    }
-
-    room.players.push({id: playerId, name, eliminated: false, connected: true});
+    room.players.push({
+        id: playerId,
+        name: cleanName(rawName),
+        eliminated: false,
+        connected: true,
+    });
     room.scores[playerId] = 0;
+    playerRooms.set(playerId, room.code);
 
     return getPublicRoom(room);
 }
@@ -389,6 +427,7 @@ function startRound(playerId, rawCode) {
         drawnCardId: null,
         extraTurn: false,
         aceFinish: false,
+        tenDraw: false,
         lastAction: openingPenalty
             ? `Round ${room.roundNumber} started. The first card is ${cardLabel(firstDiscardCard)}, so ${firstName} must draw ${openingPenalty}.`
             : `Round ${room.roundNumber} started. ${firstName} goes first.`,
@@ -440,9 +479,11 @@ function playCard(playerId, rawCode, cardId, rawSuit) {
                 ? ALLOW_PENALTY_STACKING
                     ? `Play a 2 or the Jack of Clubs, or draw ${round.pendingDraw} cards.`
                     : `You must draw ${round.pendingDraw} cards.`
-                : round.drawnCardId
-                  ? "After drawing, you can only play the card you drew."
-                  : "That card cannot be played now.",
+                : round.tenDraw
+                  ? "You played a 10 and the turn came back to you: draw a card first."
+                  : round.drawnCardId
+                    ? "After drawing, you can only play the card you drew."
+                    : "That card cannot be played now.",
         );
     }
 
@@ -466,6 +507,21 @@ function playCard(playerId, rawCode, cardId, rawSuit) {
     const penalty = penaltyOf(card);
 
     round.aceFinish = false;
+    round.tenDraw = false;
+
+    // 2 players: a 10 skips the opponent, so the turn comes straight back.
+    // The player must then draw a card instead of playing from their hand.
+    const twoPlayerTen =
+        card.rank === "10" && activePlayers(room).length === 2;
+
+    if (hand.length === 0 && twoPlayerTen) {
+        // Going out with a 10 (2 players): draw a card. If it can be played,
+        // the player plays it and wins; otherwise the opponent plays on.
+        round.aceFinish = true;
+        round.tenDraw = true;
+        round.lastAction = `${name} played their last card, a 10, and must draw a card. If it can be played, ${name} wins the round.`;
+        return {room: getPublicRoom(room), roundOver: false};
+    }
 
     if (hand.length === 0) {
         // Going out with an Ace: the player must draw one more card. If it
@@ -500,6 +556,10 @@ function playCard(playerId, rawCode, cardId, rawSuit) {
             ? ` Next player must draw ${round.pendingDraw} (or answer with a 2 / J♣).`
             : ` Next player must draw ${round.pendingDraw}.`;
         advanceTurn(room, 1);
+    } else if (twoPlayerTen) {
+        action += ` The other player is skipped, so ${name} must draw a card. If it matches, ${name} plays again.`;
+        advanceTurn(room, 2); // back to the same player (clears flags)
+        round.tenDraw = true;
     } else if (card.rank === "10") {
         action += " The next player is skipped.";
         advanceTurn(room, 2);
@@ -548,6 +608,7 @@ function drawCard(playerId, rawCode) {
     }
 
     const [drawn] = drawFromPile(round, 1);
+    round.tenDraw = false; // the required draw has been made
 
     if (!drawn) {
         // Went out with an Ace and nothing is left to draw: they win.
@@ -590,7 +651,7 @@ function passTurn(playerId, rawCode) {
 
     if (round.aceFinish) {
         throw new Error(
-            "You went out with an Ace, so you must play the card you drew.",
+            "You played your last card, so you must play the card you drew.",
         );
     }
 
@@ -647,6 +708,7 @@ function endRound(room, winnerId, note = "") {
     if (remaining.length <= 1) {
         room.status = "finished";
         room.gameWinnerId = remaining[0]?.id ?? winnerId;
+        room.finishedAt = new Date().toISOString();
     }
 }
 
@@ -661,163 +723,160 @@ function endRound(room, winnerId, note = "") {
 const RECONNECT_GRACE_MS = 120_000;
 const disconnectTimers = new Map();
 
-function markPlayerDisconnected(playerId, io) {
-    for (const [code, room] of rooms) {
-        const player = room.players.find((item) => item.id === playerId);
+// onExpire(result) is called if the player does not come back in time and is
+// removed from the room. result has the same shape as removePlayer().
+function markPlayerDisconnected(playerId, onExpire) {
+    const room = findPlayerRoom(playerId);
+    if (!room) return null;
 
-        if (!player) continue;
+    const code = room.code;
+    const player = room.players.find((item) => item.id === playerId);
 
-        player.connected = false;
-        player.reconnectUntil = Date.now() + RECONNECT_GRACE_MS;
+    player.connected = false;
+    player.reconnectUntil = Date.now() + RECONNECT_GRACE_MS;
 
-        const timerKey = `${code}:${playerId}`;
-        clearTimeout(disconnectTimers.get(timerKey));
+    const timerKey = `${code}:${playerId}`;
+    clearTimeout(disconnectTimers.get(timerKey));
 
-        const timer = setTimeout(() => {
-            const currentRoom = rooms.get(code);
-            if (!currentRoom) {
-                disconnectTimers.delete(timerKey);
-                return;
-            }
-
-            const currentPlayer = currentRoom.players.find(
-                (item) => item.id === playerId,
-            );
-
-            if (
-                !currentPlayer ||
-                currentPlayer.connected !== false ||
-                currentPlayer.reconnectUntil > Date.now()
-            ) {
-                disconnectTimers.delete(timerKey);
-                return;
-            }
-
-            const result = removePlayer(playerId);
-
+    const timer = setTimeout(() => {
+        const currentRoom = rooms.get(code);
+        if (!currentRoom) {
             disconnectTimers.delete(timerKey);
+            return;
+        }
 
-            if (!result) return;
+        const currentPlayer = currentRoom.players.find(
+            (item) => item.id === playerId,
+        );
 
-            if (result.room) {
-                io.to(result.code).emit("room:updated", result.room);
-            } else {
-                io.to(result.code).emit("room:closed");
-            }
-        }, RECONNECT_GRACE_MS);
+        if (
+            !currentPlayer ||
+            currentPlayer.connected !== false ||
+            currentPlayer.reconnectUntil > Date.now()
+        ) {
+            disconnectTimers.delete(timerKey);
+            return;
+        }
 
-        disconnectTimers.set(timerKey, timer);
+        disconnectTimers.delete(timerKey);
 
-        return {code, room: getPublicRoom(room)};
-    }
+        const result = removePlayer(playerId);
+        if (result && onExpire) onExpire(result);
+    }, RECONNECT_GRACE_MS);
 
-    return null;
+    disconnectTimers.set(timerKey, timer);
+
+    return {code, room: getPublicRoom(room)};
 }
 
 // Called when a known player connects again. Gives their seat back.
 function reconnectPlayer(playerId) {
-    for (const [code, room] of rooms) {
-        const player = room.players.find((item) => item.id === playerId);
+    const room = findPlayerRoom(playerId);
+    if (!room) return null;
 
-        if (!player) continue;
+    const code = room.code;
+    const player = room.players.find((item) => item.id === playerId);
 
-        player.connected = true;
-        delete player.reconnectUntil;
+    player.connected = true;
+    delete player.reconnectUntil;
 
-        const timerKey = `${code}:${playerId}`;
-        clearTimeout(disconnectTimers.get(timerKey));
-        disconnectTimers.delete(timerKey);
+    const timerKey = `${code}:${playerId}`;
+    clearTimeout(disconnectTimers.get(timerKey));
+    disconnectTimers.delete(timerKey);
 
-        return {code, room: getPublicRoom(room)};
-    }
-
-    return null;
+    return {code, room: getPublicRoom(room)};
 }
 
 function removePlayer(playerId) {
-    for (const [code, room] of rooms) {
-        const index = room.players.findIndex(
-            (player) => player.id === playerId,
-        );
+    const room = findPlayerRoom(playerId);
+    if (!room) return null;
 
-        if (index === -1) continue;
+    const code = room.code;
+    const index = room.players.findIndex((player) => player.id === playerId);
 
-        const timerKey = `${code}:${playerId}`;
-        clearTimeout(disconnectTimers.get(timerKey));
-        disconnectTimers.delete(timerKey);
+    playerRooms.delete(playerId);
 
-        room.players.splice(index, 1);
-        delete room.scores[playerId];
+    const timerKey = `${code}:${playerId}`;
+    clearTimeout(disconnectTimers.get(timerKey));
+    disconnectTimers.delete(timerKey);
 
-        if (room.round) {
-            delete room.round.hands[playerId];
+    room.players.splice(index, 1);
+    delete room.scores[playerId];
 
-            if (room.round.result) {
-                room.round.result.cards = room.round.result.cards.filter(
-                    (item) => item.playerId !== playerId,
-                );
-                room.round.result.winnerIds =
-                    room.round.result.winnerIds.filter((id) => id !== playerId);
-            }
+    if (room.round) {
+        delete room.round.hands[playerId];
+
+        if (room.round.result) {
+            room.round.result.cards = room.round.result.cards.filter(
+                (item) => item.playerId !== playerId,
+            );
+            room.round.result.winnerIds =
+                room.round.result.winnerIds.filter((id) => id !== playerId);
         }
-
-        // No humans left (bots do not count): close the room.
-        if (room.players.every((player) => player.isBot)) {
-            rooms.delete(code);
-            return {code, room: null};
-        }
-
-        if (room.hostId === playerId) {
-            const nextHost =
-                room.players.find((player) => !player.isBot) || room.players[0];
-            room.hostId = nextHost.id;
-        }
-
-        // A round interrupted by a player leaving is cancelled (no points).
-        if (room.status === "playing" && room.round && !room.round.result) {
-            room.round.result = {
-                number: room.round.number,
-                cancelled: true,
-                winnerId: null,
-                winnerIds: [],
-                cards: [],
-            };
-            room.round.lastAction =
-                "A player left, so the round was cancelled.";
-        }
-
-        // If only one active player is left, they win the game.
-        if (room.status === "playing") {
-            const remaining = activePlayers(room);
-            if (remaining.length <= 1) {
-                room.status = "finished";
-                room.gameWinnerId = remaining[0]?.id ?? null;
-            }
-        }
-
-        return {code, room: getPublicRoom(room)};
     }
 
-    return null;
+    // No humans left (bots do not count): close the room.
+    if (room.players.every((player) => player.isBot)) {
+        deleteRoom(room);
+        return {code, room: null};
+    }
+
+    if (room.hostId === playerId) {
+        const nextHost =
+            room.players.find((player) => !player.isBot) || room.players[0];
+        room.hostId = nextHost.id;
+    }
+
+    // A round interrupted by a player leaving is cancelled (no points).
+    if (room.status === "playing" && room.round && !room.round.result) {
+        room.round.result = {
+            number: room.round.number,
+            cancelled: true,
+            winnerId: null,
+            winnerIds: [],
+            cards: [],
+        };
+        room.round.lastAction =
+            "A player left, so the round was cancelled.";
+    }
+
+    // If only one active player is left, they win the game.
+    if (room.status === "playing") {
+        const remaining = activePlayers(room);
+        if (remaining.length <= 1) {
+            room.status = "finished";
+            room.gameWinnerId = remaining[0]?.id ?? null;
+            room.finishedAt = new Date().toISOString();
+        }
+    }
+
+    return {code, room: getPublicRoom(room)};
+}
+
+function deleteRoom(room) {
+    rooms.delete(room.code);
+
+    for (const player of room.players) {
+        if (playerRooms.get(player.id) === room.code) {
+            playerRooms.delete(player.id);
+        }
+        const timerKey = `${room.code}:${player.id}`;
+        clearTimeout(disconnectTimers.get(timerKey));
+        disconnectTimers.delete(timerKey);
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Match saving
+// Match result (stored on each phone, not on the server)
 // ---------------------------------------------------------------------------
 
-function getCompletedMatchData(rawCode) {
-    const room = findRoom(rawCode);
-
-    if (!room || room.status !== "finished") {
-        console.log("Match is not finished:", {
-            found: Boolean(room),
-            status: room?.status,
-        });
-        return null;
-    }
+function getMatchResult(room) {
+    if (room.status !== "finished" || !room.history.length) return null;
 
     return {
+        _id: `${room.code}-${room.finishedAt}`,
         roomCode: room.code,
+        solo: Boolean(room.solo),
         players: room.players.map((player) => ({
             playerId: player.id,
             name: player.name,
@@ -827,19 +886,8 @@ function getCompletedMatchData(rawCode) {
         rounds: cloneData(room.history),
         winnerId: room.gameWinnerId,
         targetScore: ELIMINATION_SCORE,
+        finishedAt: room.finishedAt,
     };
-}
-
-function claimMatchSave(rawCode) {
-    const room = findRoom(rawCode);
-
-    // Solo games are not saved to the database.
-    if (!room || room.status !== "finished" || room.matchSaved || room.solo) {
-        return false;
-    }
-
-    room.matchSaved = true;
-    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -948,11 +996,11 @@ module.exports = {
     drawCard,
     passTurn,
     removePlayer,
-    getCompletedMatchData,
-    claimMatchSave,
     markPlayerDisconnected,
     reconnectPlayer,
     getPrivateStates,
+    getPlayerRoomCode,
+    assertCanJoin,
     isBotTurn,
     runBotTurn,
 };

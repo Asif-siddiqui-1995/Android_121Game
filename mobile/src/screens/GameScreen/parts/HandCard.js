@@ -25,7 +25,8 @@ function HandCard({
         if (delay === undefined) return;
         Animated.timing(enter, {
             toValue: 1,
-            duration: 340,
+            isInteraction: false,
+            duration: 280,
             delay,
             easing: Easing.out(Easing.back(1.3)),
             useNativeDriver: true,

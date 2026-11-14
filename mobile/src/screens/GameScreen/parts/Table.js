@@ -51,6 +51,7 @@ function Table({
                     ) : null}
                 </View>
                 <StatusChips
+                    size={Math.round(cardHeight(tableW) * 0.78)}
                     chosenSuit={chosenSuit}
                     pendingDraw={pendingDraw}
                 />

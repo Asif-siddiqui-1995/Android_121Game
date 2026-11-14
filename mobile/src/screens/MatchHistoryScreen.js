@@ -9,7 +9,7 @@ import {
     View,
 } from "react-native";
 
-import {SERVER_URL} from "../config";
+import {getMatches} from "../storage/matchHistory";
 import Text from "../components/AppText";
 import PlayingCard from "../components/PlayingCard";
 import ScreenBackground from "../components/ScreenBackground";
@@ -307,20 +307,10 @@ export default function MatchHistoryScreen({
         setError("");
 
         try {
-            const response = await fetch(
-                `${SERVER_URL}/api/matches?limit=50&page=1`,
-            );
-            const result = await response.json();
-
-            if (!response.ok || !result.success) {
-                throw new Error(
-                    result.message || "Unable to load match history.",
-                );
-            }
-
-            setMatches(result.data || []);
+            // Saved on this phone when each match finished.
+            setMatches(await getMatches());
         } catch (err) {
-            setError(err.message || "Could not connect to the server.");
+            setError(err.message || "Could not read match history.");
         } finally {
             setLoading(false);
             setRefreshing(false);

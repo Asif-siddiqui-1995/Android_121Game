@@ -1,5 +1,5 @@
-import React, {useEffect, useRef, useState} from "react";
-import {AccessibilityInfo, Animated, StyleSheet, View} from "react-native";
+import React, {useEffect, useRef} from "react";
+import {Animated, StyleSheet, View} from "react-native";
 import Text from "./AppText";
 import Avatar from "./Avatar";
 import {ScoreBar} from "./PlayerSeat";
@@ -15,20 +15,8 @@ export function PulseAvatar({
     innerRef,
 }) {
     const pulse = useRef(new Animated.Value(0)).current;
-    const [reduceMotion, setReduceMotion] = useState(false);
-
     useEffect(() => {
-        let mounted = true;
-        AccessibilityInfo.isReduceMotionEnabled()
-            .then((value) => mounted && setReduceMotion(value))
-            .catch(() => {});
-        return () => {
-            mounted = false;
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!active || reduceMotion) {
+        if (!active) {
             pulse.setValue(active ? 1 : 0);
             return undefined;
         }
@@ -49,7 +37,7 @@ export function PulseAvatar({
         );
         loop.start();
         return () => loop.stop();
-    }, [active, reduceMotion, pulse]);
+    }, [active, pulse]);
 
     const box = size + 12;
 

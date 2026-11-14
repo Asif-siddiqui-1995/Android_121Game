@@ -19,6 +19,7 @@ function getTurnText({
             ? `Answer with a 2 or J♣, or draw ${room.pendingDraw}`
             : `You must draw ${room.pendingDraw}`;
     }
+    if (room.tenDraw) return "10: draw a card, play it if it matches";
     if (room.canPass) return "Play the card you drew, or pass";
     if (room.extraTurn) {
         return hasPlayable
